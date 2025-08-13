@@ -86,9 +86,9 @@ By default, the script creates a persistent container named `claude-code` that i
 - **First run**: Creates and starts the container
 - **Subsequent runs**: Reuses the existing container for faster startup
 - **Container running**: Executes commands in the running container
-- **Container stopped**: Starts the container and executes commands
+- **Container stopped**: Restarts the existing container preserving all changes
 
-This behavior significantly reduces startup time on subsequent runs since the container doesn't need to be recreated.
+This behavior significantly reduces startup time and preserves any modifications made inside the container (installed packages, configuration changes, etc.).
 
 ## What's Included
 
@@ -305,7 +305,7 @@ docker rm claude-code
 │      │                                                                          │
 │      ├─ 2. Check if container exists                                            │
 │      │     ├─ RUNNING   → Execute in existing container                         │
-│      │     ├─ STOPPED   → Remove & create new                                   │
+│      │     ├─ STOPPED   → Start existing container (preserves state)            │
 │      │     └─ MISSING   → Create new container                                  │
 │      │                                                                          │
 │      └─ 3. Mount volumes & forward env vars                                     │
@@ -345,7 +345,7 @@ docker rm claude-code
 🔒 ISOLATION BENEFITS:
   ✅ Host system protected by Docker boundaries
   ✅ All dangerous operations contained in container
-  ✅ Persistent containers for faster startup
+  ✅ Persistent containers with preserved state
   ✅ Pre-configured MCP servers ready to use
 
 ⚠️  YOLO MODE:
