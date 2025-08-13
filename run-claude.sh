@@ -180,9 +180,12 @@ DOCKER_CMD="$DOCKER_CMD --label run-claude.created=$(date -u +%Y-%m-%dT%H:%M:%SZ
 # Get current user info
 CURRENT_USER=$(whoami)
 
+# Get basename of workspace for container mapping
+WORKSPACE_BASENAME=$(basename "$WORKSPACE_PATH")
+
 # Add environment variables
 DOCKER_CMD="$DOCKER_CMD -e NODE_OPTIONS=--max-old-space-size=8192"
-DOCKER_CMD="$DOCKER_CMD -e WORKSPACE_PATH=/home/$CURRENT_USER/workspace"
+DOCKER_CMD="$DOCKER_CMD -e WORKSPACE_PATH=/home/$CURRENT_USER/$WORKSPACE_BASENAME"
 DOCKER_CMD="$DOCKER_CMD -e CLAUDE_CONFIG_PATH=/home/$CURRENT_USER/.claude"
 DOCKER_CMD="$DOCKER_CMD -e CONTAINER_USER=$CURRENT_USER"
 
@@ -206,7 +209,7 @@ fi
 
 # Add volume mounts
 DOCKER_CMD="$DOCKER_CMD -v $CLAUDE_CONFIG_PATH:/home/$CURRENT_USER/.claude"
-DOCKER_CMD="$DOCKER_CMD -v $WORKSPACE_PATH:/home/$CURRENT_USER/workspace"
+DOCKER_CMD="$DOCKER_CMD -v $WORKSPACE_PATH:/home/$CURRENT_USER/$WORKSPACE_BASENAME"
 
 # Add optional read-only mounts if they exist
 if [[ -d "$HOME/.ssh" ]]; then
@@ -312,6 +315,7 @@ RUN echo 'export ZSH="$HOME/.oh-my-zsh"' >> ~/.zshrc \
 	&& echo 'ZSH_THEME="robbyrussell"' >> ~/.zshrc \
 	&& echo 'plugins=(git zsh-autosuggestions zsh-syntax-highlighting)' >> ~/.zshrc \
 	&& echo 'source $ZSH/oh-my-zsh.sh' >> ~/.zshrc \
+	&& echo 'export PS1="%F{red}[%F{yellow}r%F{green}u%F{cyan}n%F{blue}-%F{magenta}c%F{red}l%F{yellow}a%F{green}u%F{cyan}d%F{blue}e%F{magenta}]%f $PS1"' >> ~/.zshrc \
 	&& echo 'HISTFILE=~/.zsh_history' >> ~/.zshrc \
 	&& echo 'HISTSIZE=50000' >> ~/.zshrc \
 	&& echo 'SAVEHIST=50000' >> ~/.zshrc \
@@ -351,8 +355,9 @@ RUN eval "$(fnm env)" && claude mcp add playwright \
 	npx @playwright/mcp@latest
 
 # Set working directory for user sessions
-WORKDIR /home/$USERNAME/workspace
+WORKDIR /home/$USERNAME
 
+ENTRYPOINT ["/bin/sh", "-c", "echo \"WORKSPACE_PATH is: $WORKSPACE_PATH\"; if [ -n \"$WORKSPACE_PATH\" ] && [ -d \"$WORKSPACE_PATH\" ]; then echo \"Changing to $WORKSPACE_PATH\"; cd \"$WORKSPACE_PATH\"; else echo \"Not changing directory - path not found or not set\"; fi; exec \"$@\"", "--"]
 CMD ["/bin/zsh"]
 DOCKERFILE_EOF
 
@@ -480,6 +485,13 @@ if [[ "$BUILD_ONLY" == "true" ]]; then
 fi
 
 if [[ "$FORCE_REBUILD" == "true" ]]; then
+  echo -e "${YELLOW}Force rebuild requested - cleaning up first...${NC}"
+  
+  # Remove containers first to avoid conflicts
+  echo -e "${GREEN}Removing existing containers...${NC}"
+  remove_stopped_containers
+  
+  # Remove the image
   if docker image inspect "$IMAGE_NAME" &>/dev/null; then
     echo -e "${YELLOW}Removing existing image $IMAGE_NAME...${NC}"
     docker rmi "$IMAGE_NAME"
