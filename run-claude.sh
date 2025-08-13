@@ -773,9 +773,15 @@ handle_existing_container() {
         exec docker exec -it "$CONTAINER_NAME" /bin/zsh
       fi
     else
-      echo -e "${YELLOW}Container $CONTAINER_NAME exists but is not running. Removing and creating fresh...${NC}"
-      docker rm "$CONTAINER_NAME" >/dev/null 2>&1 || true
-      # Let the script continue to create a new container
+      echo -e "${YELLOW}Container $CONTAINER_NAME exists but is not running. Starting it...${NC}"
+      if [[ $# -gt 0 ]]; then
+        # Start container and then execute command in it
+        docker start "$CONTAINER_NAME" >/dev/null
+        exec docker exec -it "$CONTAINER_NAME" "$@"
+      else
+        # Start container interactively
+        exec docker start -i "$CONTAINER_NAME"
+      fi
     fi
   fi
 }
