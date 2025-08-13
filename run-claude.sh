@@ -37,15 +37,15 @@ NC='\033[0m' # No Color
 # Generate shell completions
 generate_completions() {
   local shell="$1"
-  
+
   if [[ -z "$shell" ]]; then
     echo -e "${RED}Error: Shell type required. Use 'bash' or 'zsh'${NC}" >&2
     exit 1
   fi
-  
+
   case "$shell" in
-    bash)
-      cat <<'EOF'
+  bash)
+    cat <<'EOF'
 _run_claude_completion() {
     local cur prev opts
     COMPREPLY=()
@@ -88,9 +88,9 @@ _run_claude_completion() {
 }
 complete -F _run_claude_completion run-claude.sh
 EOF
-      ;;
-    zsh)
-      cat <<'EOF'
+    ;;
+  zsh)
+    cat <<'EOF'
 _run_claude_zsh_completion() {
     local -a options
     options=(
@@ -120,11 +120,11 @@ _run_claude_zsh_completion() {
 }
 compdef _run_claude_zsh_completion run-claude.sh
 EOF
-      ;;
-    *)
-      echo -e "${RED}Error: Unsupported shell '$shell'. Use 'bash' or 'zsh'${NC}" >&2
-      exit 1
-      ;;
+    ;;
+  *)
+    echo -e "${RED}Error: Unsupported shell '$shell'. Use 'bash' or 'zsh'${NC}" >&2
+    exit 1
+    ;;
   esac
 }
 
@@ -360,7 +360,7 @@ build_image() {
   trap "rm -rf $TEMP_DIR" EXIT
 
   # Generate Dockerfile using shared function
-  generate_dockerfile_content > "$TEMP_DIR/Dockerfile"
+  generate_dockerfile_content >"$TEMP_DIR/Dockerfile"
 
   # Build the image
   if docker build --build-arg USERNAME="$CURRENT_USER" -t "$IMAGE_NAME" "$TEMP_DIR"; then
@@ -382,18 +382,18 @@ build_image_if_missing() {
 # Function to remove stopped Claude Code containers using labels
 remove_stopped_containers() {
   echo -e "${GREEN}Searching for Claude Code containers...${NC}"
-  
+
   # Find all containers with our label
   ALL_CONTAINERS=$(docker ps -aq --filter "label=run-claude.managed=true" 2>/dev/null || true)
-  
+
   if [[ -z "$ALL_CONTAINERS" ]]; then
     echo -e "${YELLOW}No Claude Code containers found.${NC}"
     return 0
   fi
-  
+
   # Find running containers with our label
   RUNNING_CONTAINERS=$(docker ps -q --filter "label=run-claude.managed=true" 2>/dev/null || true)
-  
+
   # Find stopped containers (all - running)
   STOPPED_CONTAINERS=""
   for container in $ALL_CONTAINERS; do
@@ -401,12 +401,12 @@ remove_stopped_containers() {
       STOPPED_CONTAINERS="$STOPPED_CONTAINERS $container"
     fi
   done
-  
+
   # Display all containers with status
   echo -e "${YELLOW}Found the following Claude Code containers:${NC}"
   docker ps -a --filter "label=run-claude.managed=true" --format "table {{.Names}}\t{{.Status}}\t{{.Label \"run-claude.workspace\"}}" 2>/dev/null || true
   echo ""
-  
+
   # Handle running containers
   if [[ -n "$RUNNING_CONTAINERS" ]]; then
     echo -e "${YELLOW}Active containers (not removed):${NC}"
@@ -418,7 +418,7 @@ remove_stopped_containers() {
     done
     echo ""
   fi
-  
+
   # Remove stopped containers
   if [[ -n "$(echo $STOPPED_CONTAINERS | xargs)" ]]; then
     echo -e "${GREEN}Removing stopped containers...${NC}"
@@ -435,36 +435,36 @@ force_remove_all_containers() {
   echo -e "${RED}This will STOP and DELETE all containers, including active ones.${NC}"
   echo -e "${RED}Any unsaved work in running containers will be LOST!${NC}"
   echo ""
-  
+
   # Find all containers with our label
   ALL_CONTAINERS=$(docker ps -aq --filter "label=run-claude.managed=true" 2>/dev/null || true)
-  
+
   if [[ -z "$ALL_CONTAINERS" ]]; then
     echo -e "${YELLOW}No Claude Code containers found.${NC}"
     return 0
   fi
-  
+
   # Display all containers with status
   echo -e "${YELLOW}Found the following Claude Code containers:${NC}"
   docker ps -a --filter "label=run-claude.managed=true" --format "table {{.Names}}\t{{.Status}}\t{{.Label \"run-claude.workspace\"}}" 2>/dev/null || true
   echo ""
-  
+
   # Ask for confirmation
   echo -e "${RED}Are you sure you want to force remove ALL containers? [y/N]:${NC} "
   read -r CONFIRM
-  
+
   if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
     echo -e "${YELLOW}Operation cancelled.${NC}"
     return 0
   fi
-  
+
   echo ""
   echo -e "${GREEN}Force stopping all containers...${NC}"
   docker stop $ALL_CONTAINERS >/dev/null 2>&1 || true
-  
+
   echo -e "${GREEN}Removing all containers...${NC}"
   docker rm $ALL_CONTAINERS >/dev/null 2>&1 || true
-  
+
   echo -e "${GREEN}All Claude Code containers have been force removed.${NC}"
 }
 
@@ -578,10 +578,26 @@ RUN eval "$(fnm env)" && claude mcp add playwright \
 	--scope user \
 	npx @playwright/mcp@latest
 
+# Create entrypoint script that handles workspace directory change (as root)
+USER root
+RUN cat > /entrypoint.sh << 'EOF'
+#!/bin/sh
+echo "WORKSPACE_PATH is: $WORKSPACE_PATH"
+if [ -n "$WORKSPACE_PATH" ] && [ -d "$WORKSPACE_PATH" ]; then
+  echo "Changing to $WORKSPACE_PATH"
+  cd "$WORKSPACE_PATH"
+else
+  echo "Not changing directory - path not found or not set"
+fi
+exec "$@"
+EOF
+RUN chmod +x /entrypoint.sh
+
 # Set working directory for user sessions
+USER $USERNAME
 WORKDIR /home/$USERNAME
 
-ENTRYPOINT ["/bin/sh", "-c", "echo \"WORKSPACE_PATH is: $WORKSPACE_PATH\"; if [ -n \"$WORKSPACE_PATH\" ] && [ -d \"$WORKSPACE_PATH\" ]; then echo \"Changing to $WORKSPACE_PATH\"; cd \"$WORKSPACE_PATH\"; else echo \"Not changing directory - path not found or not set\"; fi; exec \"$@\"", "--"]
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["/bin/zsh"]
 DOCKERFILE_EOF
 }
@@ -589,16 +605,16 @@ DOCKERFILE_EOF
 # Function to export Dockerfile
 export_dockerfile() {
   local OUTPUT_FILE="$1"
-  
+
   if [[ -z "$OUTPUT_FILE" ]]; then
     echo -e "${RED}Error: No output file specified${NC}"
     exit 1
   fi
-  
+
   echo -e "${GREEN}Exporting Dockerfile to: $OUTPUT_FILE${NC}"
-  
+
   # Use the shared function to generate content
-  generate_dockerfile_content > "$OUTPUT_FILE"
+  generate_dockerfile_content >"$OUTPUT_FILE"
 
   echo -e "${GREEN}Dockerfile exported successfully!${NC}"
   echo -e "${YELLOW}To build: docker build --build-arg USERNAME=\$(whoami) -t your-image-name .${NC}"
@@ -628,11 +644,11 @@ fi
 
 if [[ "$FORCE_REBUILD" == "true" ]]; then
   echo -e "${YELLOW}Force rebuild requested - cleaning up first...${NC}"
-  
+
   # Remove containers first to avoid conflicts
   echo -e "${GREEN}Removing existing containers...${NC}"
   remove_stopped_containers
-  
+
   # Remove the image
   if docker image inspect "$IMAGE_NAME" &>/dev/null; then
     echo -e "${YELLOW}Removing existing image $IMAGE_NAME...${NC}"
@@ -648,7 +664,7 @@ fi
 handle_existing_container() {
   if docker ps -a --format "table {{.Names}}" | grep -q "^${CONTAINER_NAME}$"; then
     echo -e "${YELLOW}Container $CONTAINER_NAME already exists.${NC}"
-    
+
     # Check if container is running
     if docker ps --format "table {{.Names}}" | grep -q "^${CONTAINER_NAME}$"; then
       echo -e "${GREEN}Container $CONTAINER_NAME is already running. Executing command in existing container...${NC}"
@@ -658,13 +674,9 @@ handle_existing_container() {
         exec docker exec -it "$CONTAINER_NAME" /bin/zsh
       fi
     else
-      echo -e "${YELLOW}Starting existing container $CONTAINER_NAME...${NC}"
-      docker start "$CONTAINER_NAME" >/dev/null
-      if [[ $# -gt 0 ]]; then
-        exec docker exec -it "$CONTAINER_NAME" "$@"
-      else
-        exec docker exec -it "$CONTAINER_NAME" /bin/zsh
-      fi
+      echo -e "${YELLOW}Container $CONTAINER_NAME exists but is not running. Removing and creating fresh...${NC}"
+      docker rm "$CONTAINER_NAME" >/dev/null 2>&1 || true
+      # Let the script continue to create a new container
     fi
   fi
 }

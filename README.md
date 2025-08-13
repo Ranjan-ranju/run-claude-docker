@@ -274,3 +274,49 @@ No separate files needed - just the single `run-claude.sh` script!
 ## Contributing
 
 Pull requests are welcome! Feel free to contribute improvements, bug fixes, or new features.
+
+### Development Workflow
+
+The Dockerfile is **embedded directly** in the `run-claude.sh` script to maintain the self-contained nature of the tool. When making changes to the container configuration:
+
+1. **Edit the embedded Dockerfile** in the `generate_dockerfile_content()` function
+2. **Test your changes** by rebuilding the container:
+   ```bash
+   # Build new image and test (doesn't run container)
+   ./run-claude.sh --build
+   
+   # Or rebuild and run container immediately  
+   ./run-claude.sh --rebuild
+   ```
+3. **Export for standalone use** (optional):
+   ```bash
+   # Export current Dockerfile for inspection or external use
+   ./run-claude.sh --export-dockerfile Dockerfile
+   ```
+
+### Key Points for Contributors
+
+- **Single source of truth**: The `generate_dockerfile_content()` function contains the authoritative Dockerfile
+- **No separate Dockerfile**: Everything is embedded to maintain the self-contained design
+- **Always test rebuilds**: After changing container configuration, use `--rebuild` to test
+- **Both build options available**:
+  - `--build`: Just builds the image (useful for testing build process)
+  - `--rebuild`: Builds image and runs container (full testing)
+
+### Testing Container Changes
+
+```bash
+# After editing the embedded Dockerfile:
+
+# Option 1: Build only (test build process)
+./run-claude.sh --build
+
+# Option 2: Rebuild and test (full workflow) 
+./run-claude.sh --rebuild
+
+# Option 3: Export and inspect
+./run-claude.sh --export-dockerfile debug.dockerfile
+less debug.dockerfile
+```
+
+This workflow ensures that the container changes are properly tested while maintaining the tool's self-contained design.
