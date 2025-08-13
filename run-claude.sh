@@ -344,16 +344,30 @@ if [[ -n "$UNSPLASH_ACCESS_KEY" ]]; then
   DOCKER_CMD="$DOCKER_CMD -e UNSPLASH_ACCESS_KEY=$UNSPLASH_ACCESS_KEY"
 fi
 
-# Forward OAuth account if it exists
+# Forward Claude config to merge if it exists
 if [[ -f "$HOME/.claude.json" ]]; then
-  OAUTH_ACCOUNT=$(jq -c '.oauthAccount // empty' "$HOME/.claude.json" 2>/dev/null || echo "")
-  if [[ -n "$OAUTH_ACCOUNT" && "$OAUTH_ACCOUNT" != "null" && "$OAUTH_ACCOUNT" != '""' ]]; then
-    # Base64 encode to avoid shell escaping issues
-    OAUTH_ACCOUNT_B64=$(printf '%s' "$OAUTH_ACCOUNT" | base64 | tr -d '\n')
-    if [[ "$VERBOSE" == "true" ]]; then
-      echo -e "${YELLOW}OAuth account detected and will be merged in container${NC}"
+  # List of config keys to merge from host to container
+  CONFIG_KEYS=("oauthAccount" "hasSeenTasksHint" "userID" "hasCompletedOnboarding" "lastOnboardingVersion" "subscriptionNoticeCount" "hasAvailableSubscription" "s1mAccessCache")
+  
+  # Build jq expression to extract all desired keys
+  JQ_SELECTORS=""
+  for key in "${CONFIG_KEYS[@]}"; do
+    if [[ -n "$JQ_SELECTORS" ]]; then
+      JQ_SELECTORS="$JQ_SELECTORS, "
     fi
-    DOCKER_CMD="$DOCKER_CMD -e CLAUDE_OAUTH_ACCOUNT_B64=$OAUTH_ACCOUNT_B64"
+    JQ_SELECTORS="$JQ_SELECTORS\"$key\": .$key"
+  done
+  
+  # Extract config data and add bypass permissions
+  CLAUDE_CONFIG=$(jq -c "{$JQ_SELECTORS, \"bypassPermissionsModeAccepted\": true}" "$HOME/.claude.json" 2>/dev/null || echo "")
+  
+  if [[ -n "$CLAUDE_CONFIG" && "$CLAUDE_CONFIG" != "null" && "$CLAUDE_CONFIG" != '""' && "$CLAUDE_CONFIG" != "{}" ]]; then
+    # Base64 encode to avoid shell escaping issues
+    CLAUDE_CONFIG_B64=$(printf '%s' "$CLAUDE_CONFIG" | base64 | tr -d '\n')
+    if [[ "$VERBOSE" == "true" ]]; then
+      echo -e "${YELLOW}Claude config detected and will be merged in container${NC}"
+    fi
+    DOCKER_CMD="$DOCKER_CMD -e CLAUDE_CONFIG_MERGE_B64=$CLAUDE_CONFIG_B64"
   fi
 fi
 
@@ -644,27 +658,25 @@ USER root
 RUN cat > /entrypoint.sh << 'EOF'
 #!/bin/sh
 
-# Merge OAuth account if provided
-if [ -n "$CLAUDE_OAUTH_ACCOUNT_B64" ]; then
+# Merge Claude config if provided
+if [ -n "$CLAUDE_CONFIG_MERGE_B64" ]; then
   CLAUDE_JSON="$HOME/.claude.json"
   
-  # Decode base64 OAuth account
-  CLAUDE_OAUTH_ACCOUNT=$(echo "$CLAUDE_OAUTH_ACCOUNT_B64" | tr -d '\n' | base64 -d)
+  # Decode base64 config data
+  CLAUDE_CONFIG_DATA=$(echo "$CLAUDE_CONFIG_MERGE_B64" | tr -d '\n' | base64 -d)
   
-  if [ ! -f "$CLAUDE_JSON" ] || ! jq -e '.oauthAccount' "$CLAUDE_JSON" >/dev/null 2>&1; then
-    if [ -f "$CLAUDE_JSON" ]; then
-      # Merge with existing file
-      cat "$CLAUDE_JSON" | jq --argjson oauth "$CLAUDE_OAUTH_ACCOUNT" '.oauthAccount = $oauth' > "$CLAUDE_JSON.tmp" && mv "$CLAUDE_JSON.tmp" "$CLAUDE_JSON"
-    else
-      # Create new file with OAuth account
-      echo "{\"oauthAccount\": $CLAUDE_OAUTH_ACCOUNT}" | jq . > "$CLAUDE_JSON"
-    fi
-    echo "OAuth account merged into .claude.json"
+  if [ -f "$CLAUDE_JSON" ]; then
+    # Merge with existing file
+    cat "$CLAUDE_JSON" | jq ". * $CLAUDE_CONFIG_DATA" > "$CLAUDE_JSON.tmp" && mv "$CLAUDE_JSON.tmp" "$CLAUDE_JSON"
+  else
+    # Create new file with config data
+    echo "$CLAUDE_CONFIG_DATA" | jq . > "$CLAUDE_JSON"
   fi
+  echo "Claude config merged into .claude.json"
   
   # Unset the environment variables for security
-  unset CLAUDE_OAUTH_ACCOUNT_B64
-  unset CLAUDE_OAUTH_ACCOUNT
+  unset CLAUDE_CONFIG_MERGE_B64
+  unset CLAUDE_CONFIG_DATA
 fi
 
 # Change to workspace directory if provided
