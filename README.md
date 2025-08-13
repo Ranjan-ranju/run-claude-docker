@@ -158,6 +158,18 @@ Automatically configured and ready to use:
 - `NUGET_API_KEY`
 - `CLAUDE_DANGEROUS_MODE=1`
 - `NODE_OPTIONS=--max-old-space-size=8192`
+- `TERM` - Terminal settings for proper color support
+
+#### Claude Authentication Forwarding
+
+The script automatically forwards Claude authentication and OAuth credentials from your host system:
+
+- **OAuth Account**: Preserves your Claude login session
+- **User Settings**: Maintains preferences and onboarding state
+- **Permissions**: Automatically enables bypass permissions mode in container
+- **Subscription**: Forwards subscription and access cache information
+
+This ensures seamless authentication without needing to re-login inside the container.
 
 ### Volume Mounts
 
@@ -167,6 +179,17 @@ Automatically mounted:
 - Claude config: `~/.claude` → `/home/$(whoami)/.claude`
 - SSH keys: `~/.ssh` → `/home/$(whoami)/.ssh` (read-only)
 - Git config: `~/.gitconfig` → `/home/$(whoami)/.gitconfig` (read-only)
+
+### Authentication Integration
+
+The script makes a best effort to forward your Claude authentication into the container session:
+
+- **Seamless Login**: Your existing Claude authentication is automatically available
+- **OAuth Preservation**: Maintains your logged-in state and subscription access
+- **Config Merging**: Intelligently merges host Claude configuration with container settings
+- **Permission Bypass**: Automatically enables bypass permissions mode for streamlined operation
+
+No need to run `claude auth` inside the container - your host authentication is preserved and forwarded automatically.
 
 ## Testing the Setup
 
@@ -375,6 +398,8 @@ docker rm claude-code
 │  ENV FORWARDED:                                                                 │
 │  • API Keys (Unsplash, OpenAI, etc.)                                            │
 │  • CLAUDE_DANGEROUS_MODE=1                                                      │
+│  • Claude Authentication & OAuth                                                │
+│  • Terminal settings (TERM)                                                     │
 └─────────────────────────────────────────────────────────────────────────────────┘
 
 🔒 ISOLATION BENEFITS:
@@ -395,7 +420,7 @@ The `run-claude.sh` script is completely self-contained:
 2. **Auto-detection**: Checks if Docker image exists, pulls from Docker Hub if missing, builds only with `--build` or `--rebuild`
 3. **Container Persistence**: Reuses existing `claude-code` container for faster startup
 4. **MCP Setup**: Automatically configures Unsplash, Context7, and Playwright servers
-5. **Environment Forwarding**: Passes through API keys and configurations
+5. **Environment Forwarding**: Passes through API keys, configurations, and Claude authentication
 6. **Volume Management**: Mounts workspace and config directories automatically
 7. **User Matching**: Creates container user matching your host user
 
