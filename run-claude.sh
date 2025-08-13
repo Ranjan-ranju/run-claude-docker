@@ -586,22 +586,6 @@ ENV PATH="/home/$USERNAME/.local/share/fnm:$PATH"
 SHELL ["/bin/bash", "-c"]
 RUN eval "$(fnm env)" && fnm install 22 && fnm default 22 && fnm use 22
 
-# Configure zsh with theme, plugins, and aliases
-RUN echo 'export ZSH="$HOME/.oh-my-zsh"' >> ~/.zshrc \
-	&& echo 'ZSH_THEME="robbyrussell"' >> ~/.zshrc \
-	&& echo 'plugins=(git zsh-autosuggestions zsh-syntax-highlighting)' >> ~/.zshrc \
-	&& echo 'source $ZSH/oh-my-zsh.sh' >> ~/.zshrc \
-	&& echo 'export PS1="%F{red}[%F{yellow}r%F{green}u%F{cyan}n%F{blue}-%F{magenta}c%F{red}l%F{yellow}a%F{green}u%F{cyan}d%F{blue}e%F{magenta}]%f $PS1"' >> ~/.zshrc \
-	&& echo 'HISTFILE=~/.zsh_history' >> ~/.zshrc \
-	&& echo 'HISTSIZE=50000' >> ~/.zshrc \
-	&& echo 'SAVEHIST=50000' >> ~/.zshrc \
-	&& echo 'eval "$(fnm env --use-on-cd --shell zsh)"' >> ~/.zshrc \
-	&& echo 'alias claude="claude --dangerously-skip-permissions"' >> ~/.zshrc \
-	&& echo 'alias claude-safe="command claude"' >> ~/.zshrc \
-	&& echo 'alias ll="ls -la"' >> ~/.zshrc \
-	&& echo 'alias vim="nvim"' >> ~/.zshrc \
-	&& echo 'alias vi="nvim"' >> ~/.zshrc \
-	&& echo 'export GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"' >> ~/.zshrc
 
 # Install LazyVim
 RUN git clone https://github.com/LazyVim/starter ~/.config/nvim \
@@ -654,6 +638,39 @@ RUN chmod +x /entrypoint.sh
 # Set working directory for user sessions
 USER $USERNAME
 WORKDIR /home/$USERNAME
+
+# Configure zsh with theme, plugins, and aliases
+RUN cat > ~/.zshrc << 'EOF'
+export ZSH="$HOME/.oh-my-zsh"
+ZSH_THEME="robbyrussell"
+plugins=(git zsh-autosuggestions zsh-syntax-highlighting)
+source $ZSH/oh-my-zsh.sh
+
+# Colorful prompt prefix
+export PS1="%F{red}[%F{yellow}r%F{green}u%F{cyan}n%F{blue}-%F{magenta}c%F{red}l%F{yellow}a%F{green}u%F{cyan}d%F{blue}e%F{magenta}]%f $PS1"
+
+# History configuration
+HISTFILE=~/.zsh_history
+HISTSIZE=50000
+SAVEHIST=50000
+
+# Node version manager
+eval "$(fnm env --use-on-cd --shell zsh)"
+
+# Claude aliases - conditional based on dangerous mode
+if [ "$CLAUDE_DANGEROUS_MODE" = "1" ] || [ "$ANTHROPIC_DANGEROUS_MODE" = "1" ]; then
+	alias claude="claude --dangerously-skip-permissions"
+fi
+alias claude-safe="command claude"
+
+# General aliases
+alias ll="ls -la"
+alias vim="nvim"
+alias vi="nvim"
+
+# Git SSH configuration
+export GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
+EOF
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["/bin/zsh"]
