@@ -293,6 +293,60 @@ docker rm claude-code
 
 ## How It Works
 
+### Visual Workflow
+
+```mermaid
+flowchart TD
+    Start([🚀 ./run-claude.sh]) --> CheckImage{🐳 Docker Image<br/>Exists?}
+    
+    CheckImage -->|No| PullImage[📥 Try Pull from<br/>Docker Hub]
+    PullImage --> PullSuccess{Pull Success?}
+    PullSuccess -->|Yes| TagImage[🏷️ Tag as<br/>claude-code:latest]
+    PullSuccess -->|No| BuildImage[🔨 Build from<br/>Embedded Dockerfile]
+    TagImage --> CheckContainer
+    BuildImage --> CheckContainer
+    CheckImage -->|Yes| CheckContainer{📦 Container<br/>Exists?}
+    
+    CheckContainer -->|Missing| CreateContainer[⚡ Create New Container<br/>with Volumes & Env]
+    CheckContainer -->|Stopped| StartContainer[♻️ Start Existing<br/>Container<br/><small>🎯 Preserves State</small>]
+    CheckContainer -->|Running| ExecContainer[🔄 Execute in<br/>Running Container]
+    
+    CreateContainer --> RunCommand{💻 Command<br/>Provided?}
+    StartContainer --> RunCommand
+    ExecContainer --> RunCommand
+    
+    RunCommand -->|Yes| ExecuteCmd[⚡ Execute:<br/>claude --dangerously-skip-permissions]
+    RunCommand -->|No| InteractiveShell[🐚 Interactive Shell<br/>zsh + oh-my-zsh]
+    
+    ExecuteCmd --> MCPServers[🤖 MCP Servers Available]
+    InteractiveShell --> MCPServers
+    
+    MCPServers --> Unsplash[📸 Unsplash<br/>Photo Search]
+    MCPServers --> Context7[🧠 Context7<br/>AI Context]
+    MCPServers --> Playwright[🎭 Playwright<br/>Browser Automation]
+    
+    Unsplash --> WorkInContainer[🛠️ Work in Isolated<br/>Container Environment]
+    Context7 --> WorkInContainer
+    Playwright --> WorkInContainer
+    
+    WorkInContainer --> PersistChanges[💾 Changes Persist<br/>in Container]
+    PersistChanges --> End([✅ Complete])
+    
+    %% Styling
+    classDef startEnd fill:#e1f5fe,stroke:#01579b,stroke-width:3px,color:#000
+    classDef decision fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000
+    classDef process fill:#f3e5f5,stroke:#4a148c,stroke-width:2px,color:#000
+    classDef container fill:#e8f5e8,stroke:#2e7d32,stroke-width:2px,color:#000
+    classDef mcp fill:#fff8e1,stroke:#f57f17,stroke-width:2px,color:#000
+    
+    class Start,End startEnd
+    class CheckImage,PullSuccess,CheckContainer,RunCommand decision
+    class PullImage,TagImage,BuildImage,CreateContainer,StartContainer,ExecContainer,ExecuteCmd,InteractiveShell,WorkInContainer,PersistChanges process
+    class MCPServers,Unsplash,Context7,Playwright mcp
+```
+
+### Detailed Architecture
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────┐
 │                                HOST SYSTEM                                      │
