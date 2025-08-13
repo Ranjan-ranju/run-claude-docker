@@ -27,6 +27,7 @@ VERBOSE=false
 REMOVE_CONTAINERS=false
 FORCE_REMOVE_ALL_CONTAINERS=false
 EXPORT_DOCKERFILE=""
+PUSH_TO_REPO=""
 
 # Colors for output
 RED='\033[0;31m'
@@ -52,7 +53,7 @@ _run_claude_completion() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
     
-    opts="-w --workspace -c --claude-config -n --name -i --image --rm --no-interactive --no-privileged --safe --build --rebuild --recreate --verbose --remove-containers --force-remove-all-containers --export-dockerfile --generate-completions -h --help"
+    opts="-w --workspace -c --claude-config -n --name -i --image --rm --no-interactive --no-privileged --safe --build --rebuild --recreate --verbose --remove-containers --force-remove-all-containers --export-dockerfile --push-to --generate-completions -h --help"
     
     case "${prev}" in
         -w|--workspace)
@@ -73,6 +74,10 @@ _run_claude_completion() {
             ;;
         --export-dockerfile)
             COMPREPLY=( $(compgen -f -- ${cur}) )
+            return 0
+            ;;
+        --push-to)
+            COMPREPLY=( $(compgen -W "docker.io/username/repo:tag" -- ${cur}) )
             return 0
             ;;
         --generate-completions)
@@ -113,6 +118,7 @@ _run_claude_zsh_completion() {
         '--remove-containers[Remove stopped Claude Code containers and exit]'
         '--force-remove-all-containers[Remove ALL Claude Code containers and exit]'
         '--export-dockerfile[Export the embedded Dockerfile]:file:_files'
+        '--push-to[Tag and push image to repository]:repository:'
         '--generate-completions[Generate shell completions]:shell:(bash zsh)'
         '(-h --help)'{-h,--help}'[Show help]'
     )
@@ -149,6 +155,7 @@ usage() {
   echo "                          Remove ALL Claude Code containers (including active ones) and exit"
   echo "  --export-dockerfile FILE"
   echo "                          Export the embedded Dockerfile to specified file and exit"
+  echo "  --push-to REPO          Tag and push image to repository (e.g., docker.io/user/repo:tag)"
   echo "  --generate-completions SHELL"
   echo "                          Generate shell completions (bash|zsh) and exit"
   echo "  -h, --help              Show this help"
@@ -172,12 +179,22 @@ usage() {
   echo "  # Force rebuild image and run"
   echo "  $0 --rebuild"
   echo ""
+  echo "  # Push to Docker Hub"
+  echo "  $0 --push-to docker.io/username/claude-code:latest"
+  echo ""
   echo "  # Install shell completions"
   echo "  # For bash:"
   echo "  echo 'eval \"\$($0 --generate-completions bash)\"' >> ~/.bashrc"
   echo ""
   echo "  # For zsh:"
   echo "  echo 'eval \"\$($0 --generate-completions zsh)\"' >> ~/.zshrc"
+  echo ""
+  echo "ENVIRONMENT VARIABLES:"
+  echo "  CLAUDE_CODE_IMAGE_NAME  Override the default Docker Hub image (default: icanhasjonas/claude-code)"
+  echo "                          Note: :latest tag is automatically appended"
+  echo ""
+  echo "  # Use custom image:"
+  echo "  CLAUDE_CODE_IMAGE_NAME=myregistry/my-claude-code $0"
 }
 
 # Parse arguments
@@ -241,6 +258,10 @@ while [[ $# -gt 0 ]]; do
     ;;
   --export-dockerfile)
     EXPORT_DOCKERFILE="$2"
+    shift 2
+    ;;
+  --push-to)
+    PUSH_TO_REPO="$2"
     shift 2
     ;;
   --generate-completions)
@@ -371,11 +392,32 @@ build_image() {
   fi
 }
 
-# Function to check if image exists and build if necessary
+# Function to pull and tag remote image
+pull_remote_image() {
+  local REMOTE_IMAGE="${CLAUDE_CODE_IMAGE_NAME:-icanhasjonas/claude-code}:latest"
+  
+  echo -e "${GREEN}Pulling remote image $REMOTE_IMAGE...${NC}"
+  if docker pull "$REMOTE_IMAGE"; then
+    echo -e "${GREEN}Successfully pulled $REMOTE_IMAGE${NC}"
+    echo -e "${GREEN}Tagging as $IMAGE_NAME...${NC}"
+    if docker tag "$REMOTE_IMAGE" "$IMAGE_NAME"; then
+      echo -e "${GREEN}Successfully tagged as $IMAGE_NAME${NC}"
+    else
+      echo -e "${RED}Failed to tag remote image${NC}"
+      echo -e "${YELLOW}Falling back to building from source...${NC}"
+      build_image
+    fi
+  else
+    echo -e "${YELLOW}Failed to pull remote image. Building from source...${NC}"
+    build_image
+  fi
+}
+
+# Function to check if image exists and pull/build if necessary
 build_image_if_missing() {
   if ! docker image inspect "$IMAGE_NAME" &>/dev/null; then
-    echo -e "${YELLOW}Docker image $IMAGE_NAME not found. Building it now...${NC}"
-    build_image
+    echo -e "${YELLOW}Docker image $IMAGE_NAME not found.${NC}"
+    pull_remote_image
   fi
 }
 
@@ -636,9 +678,50 @@ export_dockerfile() {
   echo -e "${YELLOW}To build: docker build --build-arg USERNAME=\$(whoami) -t your-image-name .${NC}"
 }
 
+# Function to push image to repository
+push_to_repository() {
+  local REPO="$1"
+
+  if [[ -z "$REPO" ]]; then
+    echo -e "${RED}Error: No repository specified${NC}"
+    exit 1
+  fi
+
+  echo -e "${GREEN}Pushing image to repository: $REPO${NC}"
+
+  # Check if local image exists
+  if ! docker image inspect "$IMAGE_NAME" &>/dev/null; then
+    echo -e "${YELLOW}Local image $IMAGE_NAME not found. Getting it first...${NC}"
+    pull_remote_image
+  fi
+
+  # Tag the image for the target repository
+  echo -e "${GREEN}Tagging image $IMAGE_NAME as $REPO...${NC}"
+  if ! docker tag "$IMAGE_NAME" "$REPO"; then
+    echo -e "${RED}Failed to tag image${NC}"
+    exit 1
+  fi
+
+  # Push the image
+  echo -e "${GREEN}Pushing $REPO to registry...${NC}"
+  if docker push "$REPO"; then
+    echo -e "${GREEN}Successfully pushed $REPO${NC}"
+    echo -e "${YELLOW}Image is now available at: $REPO${NC}"
+  else
+    echo -e "${RED}Failed to push image${NC}"
+    echo -e "${YELLOW}Make sure you are logged in: docker login${NC}"
+    exit 1
+  fi
+}
+
 # Handle special commands
 if [[ -n "$EXPORT_DOCKERFILE" ]]; then
   export_dockerfile "$EXPORT_DOCKERFILE"
+  exit 0
+fi
+
+if [[ -n "$PUSH_TO_REPO" ]]; then
+  push_to_repository "$PUSH_TO_REPO"
   exit 0
 fi
 

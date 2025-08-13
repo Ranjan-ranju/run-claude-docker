@@ -25,7 +25,7 @@ Run claude code in somewhat safe and isolated yolo mode
 curl -O https://raw.githubusercontent.com/icanhasjonas/run-claude-docker/main/run-claude.sh
 chmod +x run-claude.sh
 
-# Interactive shell (auto-builds image on first run, reuses existing container)
+# Interactive shell (auto-pulls from Docker Hub on first run, reuses existing container)
 ./run-claude.sh
 
 # Run specific command
@@ -103,7 +103,11 @@ Automatically configured and ready to use:
 - **Playwright**: Browser automation (`@playwright/mcp@latest`)
 
 ### Environment Variables
-Automatically forwarded from host:
+
+#### Script Configuration
+- `CLAUDE_CODE_IMAGE_NAME` - Override default Docker Hub image (default: `icanhasjonas/claude-code`)
+
+#### Automatically forwarded from host:
 - `UNSPLASH_ACCESS_KEY`
 - `OPENAI_API_KEY`
 - `NUGET_API_KEY`
@@ -119,9 +123,9 @@ Automatically mounted:
 
 ## Testing the Setup
 
-### 1. First Run (Auto-build)
+### 1. First Run (Auto-pull)
 ```bash
-# First run will automatically build the image
+# First run will automatically pull the pre-built image from Docker Hub
 ./run-claude.sh claude auth status
 
 # Test MCP servers are working
@@ -186,6 +190,10 @@ RUN_CLAUDE_VERBOSE=1 ./run-claude.sh
 # Set required environment variables
 export UNSPLASH_ACCESS_KEY="your-key-here"
 export OPENAI_API_KEY="your-openai-key"
+
+# Use custom Docker image
+export CLAUDE_CODE_IMAGE_NAME="myregistry/my-claude-code"
+./run-claude.sh
 
 # Or use .env file approach
 echo "UNSPLASH_ACCESS_KEY=your-key" >> ~/.bashrc
@@ -323,7 +331,7 @@ docker rm claude-code
 The `run-claude.sh` script is completely self-contained:
 
 1. **Embedded Dockerfile**: Contains a complete Ubuntu 22.04 setup with Claude Code
-2. **Auto-detection**: Checks if Docker image exists, builds if missing
+2. **Auto-detection**: Checks if Docker image exists, pulls from Docker Hub if missing, builds only with `--build` or `--rebuild`
 3. **Container Persistence**: Reuses existing `claude-code` container for faster startup
 4. **MCP Setup**: Automatically configures Unsplash, Context7, and Playwright servers
 5. **Environment Forwarding**: Passes through API keys and configurations
