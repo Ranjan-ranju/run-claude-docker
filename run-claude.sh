@@ -7,8 +7,14 @@ set -e
 
 # Default values
 IMAGE_NAME="claude-code:latest"
-CONTAINER_NAME="claude-code"
 WORKSPACE_PATH="$(pwd)"
+
+# Generate container name based on workspace path
+# Take last two path components and create hash
+WORKSPACE_TWO_PARTS=$(echo "$WORKSPACE_PATH" | awk -F'/' '{if(NF>=2) print $(NF-1)"/"$NF; else print $NF}')
+WORKSPACE_SANITIZED=$(echo "$WORKSPACE_TWO_PARTS" | sed 's/[^a-zA-Z0-9_-]/-/g')
+WORKSPACE_HASH=$(echo "$WORKSPACE_PATH" | sha256sum | cut -c1-12)
+CONTAINER_NAME="claude-code-$WORKSPACE_SANITIZED-$WORKSPACE_HASH"
 CLAUDE_CONFIG_PATH="$HOME/.claude"
 INTERACTIVE=true
 REMOVE_CONTAINER=false
@@ -17,6 +23,7 @@ DANGEROUS_MODE=true
 BUILD_ONLY=false
 FORCE_REBUILD=false
 RECREATE_CONTAINER=false
+VERBOSE=false
 
 # Colors for output
 RED='\033[0;31m'
@@ -39,6 +46,7 @@ usage() {
   echo "  --build                 Build the Docker image and exit"
   echo "  --rebuild               Force rebuild the Docker image and continue"
   echo "  --recreate              Remove existing container and create new one"
+  echo "  --verbose               Show detailed output including Docker commands"
   echo "  -h, --help              Show this help"
   echo ""
   echo "EXAMPLES:"
@@ -106,6 +114,10 @@ while [[ $# -gt 0 ]]; do
     ;;
   --recreate)
     RECREATE_CONTAINER=true
+    shift
+    ;;
+  --verbose)
+    VERBOSE=true
     shift
     ;;
   -h | --help)
@@ -196,8 +208,10 @@ if [[ $# -gt 0 ]]; then
 fi
 
 # Print what we're about to run
-if [[ "$RUN_CLAUDE_VERBOSE" == "1" ]]; then
+if [[ "$VERBOSE" == "true" ]]; then
   echo -e "${GREEN}Running Claude Code container...${NC}"
+  echo -e "${YELLOW}Container name: $CONTAINER_NAME${NC}"
+  echo -e "${YELLOW}Workspace: $WORKSPACE_PATH${NC}"
   echo -e "${YELLOW}Command: $DOCKER_CMD${NC}"
   echo ""
 fi
