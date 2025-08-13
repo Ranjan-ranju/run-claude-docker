@@ -33,7 +33,7 @@ PUSH_TO_REPO=""
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-BRIGHT_MAGENTA='\033[1;35m'
+MAGENTA='\033[0;35m'
 BRIGHT_CYAN='\033[1;36m'
 NC='\033[0m' # No Color
 
@@ -376,7 +376,7 @@ fi
 
 # Function to build Docker image
 build_image() {
-  echo -e "${BRIGHT_MAGENTA}Building Docker image ${BRIGHT_CYAN}$IMAGE_NAME${BRIGHT_MAGENTA}...${NC}"
+  echo -e "${MAGENTA}Building Docker image ${BRIGHT_CYAN}$IMAGE_NAME${MAGENTA}...${NC}"
 
   # Create temporary directory for Dockerfile
   TEMP_DIR=$(mktemp -d)
@@ -387,7 +387,7 @@ build_image() {
 
   # Build the image
   if docker build --build-arg USERNAME="$CURRENT_USER" -t "$IMAGE_NAME" "$TEMP_DIR"; then
-    echo -e "${BRIGHT_MAGENTA}Successfully built ${BRIGHT_CYAN}$IMAGE_NAME${NC}"
+    echo -e "${MAGENTA}Successfully built ${BRIGHT_CYAN}$IMAGE_NAME${NC}"
   else
     echo -e "${RED}Failed to build Docker image${NC}"
     exit 1
@@ -398,12 +398,12 @@ build_image() {
 pull_remote_image() {
   local REMOTE_IMAGE="${CLAUDE_CODE_IMAGE_NAME:-icanhasjonas/claude-code}:latest"
   
-  echo -e "${BRIGHT_MAGENTA}Pulling remote image ${BRIGHT_CYAN}$REMOTE_IMAGE${BRIGHT_MAGENTA}...${NC}"
+  echo -e "${MAGENTA}Pulling remote image ${BRIGHT_CYAN}$REMOTE_IMAGE${MAGENTA}...${NC}"
   if docker pull "$REMOTE_IMAGE"; then
-    echo -e "${BRIGHT_MAGENTA}Successfully pulled ${BRIGHT_CYAN}$REMOTE_IMAGE${NC}"
-    echo -e "${BRIGHT_MAGENTA}Tagging as ${BRIGHT_CYAN}$IMAGE_NAME${BRIGHT_MAGENTA}...${NC}"
+    echo -e "${MAGENTA}Successfully pulled ${BRIGHT_CYAN}$REMOTE_IMAGE${NC}"
+    echo -e "${MAGENTA}Tagging as ${BRIGHT_CYAN}$IMAGE_NAME${MAGENTA}...${NC}"
     if docker tag "$REMOTE_IMAGE" "$IMAGE_NAME"; then
-      echo -e "${BRIGHT_MAGENTA}Successfully tagged as ${BRIGHT_CYAN}$IMAGE_NAME${NC}"
+      echo -e "${MAGENTA}Successfully tagged as ${BRIGHT_CYAN}$IMAGE_NAME${NC}"
     else
       echo -e "${RED}Failed to tag remote image${NC}"
       echo -e "${YELLOW}Falling back to building from source...${NC}"
@@ -688,12 +688,12 @@ export_dockerfile() {
     exit 1
   fi
 
-  echo -e "${BRIGHT_MAGENTA}Exporting Dockerfile to: ${BRIGHT_CYAN}$OUTPUT_FILE${NC}"
+  echo -e "${MAGENTA}Exporting Dockerfile to: ${BRIGHT_CYAN}$OUTPUT_FILE${NC}"
 
   # Use the shared function to generate content
   generate_dockerfile_content >"$OUTPUT_FILE"
 
-  echo -e "${BRIGHT_MAGENTA}Dockerfile exported successfully!${NC}"
+  echo -e "${MAGENTA}Dockerfile exported successfully!${NC}"
   echo -e "${YELLOW}To build: docker build --build-arg USERNAME=\$(whoami) -t your-image-name .${NC}"
 }
 
@@ -706,7 +706,7 @@ push_to_repository() {
     exit 1
   fi
 
-  echo -e "${BRIGHT_MAGENTA}Pushing image to repository: ${BRIGHT_CYAN}$REPO${NC}"
+  echo -e "${MAGENTA}Pushing image to repository: ${BRIGHT_CYAN}$REPO${NC}"
 
   # Check if local image exists
   if ! docker image inspect "$IMAGE_NAME" &>/dev/null; then
@@ -715,17 +715,17 @@ push_to_repository() {
   fi
 
   # Tag the image for the target repository
-  echo -e "${BRIGHT_MAGENTA}Tagging image ${BRIGHT_CYAN}$IMAGE_NAME${BRIGHT_MAGENTA} as ${BRIGHT_CYAN}$REPO${BRIGHT_MAGENTA}...${NC}"
+  echo -e "${MAGENTA}Tagging image ${BRIGHT_CYAN}$IMAGE_NAME${MAGENTA} as ${BRIGHT_CYAN}$REPO${MAGENTA}...${NC}"
   if ! docker tag "$IMAGE_NAME" "$REPO"; then
     echo -e "${RED}Failed to tag image${NC}"
     exit 1
   fi
 
   # Push the image
-  echo -e "${BRIGHT_MAGENTA}Pushing ${BRIGHT_CYAN}$REPO${BRIGHT_MAGENTA} to registry...${NC}"
+  echo -e "${MAGENTA}Pushing ${BRIGHT_CYAN}$REPO${MAGENTA} to registry...${NC}"
   if docker push "$REPO"; then
-    echo -e "${BRIGHT_MAGENTA}Successfully pushed ${BRIGHT_CYAN}$REPO${NC}"
-    echo -e "${BRIGHT_MAGENTA}Image is now available at: ${BRIGHT_CYAN}$REPO${NC}"
+    echo -e "${MAGENTA}Successfully pushed ${BRIGHT_CYAN}$REPO${NC}"
+    echo -e "${MAGENTA}Image is now available at: ${BRIGHT_CYAN}$REPO${NC}"
   else
     echo -e "${RED}Failed to push image${NC}"
     echo -e "${YELLOW}Make sure you are logged in: docker login${NC}"
@@ -756,7 +756,7 @@ fi
 
 if [[ "$BUILD_ONLY" == "true" ]]; then
   build_image
-  echo -e "${BRIGHT_MAGENTA}Build complete. Exiting.${NC}"
+  echo -e "${MAGENTA}Build complete. Exiting.${NC}"
   exit 0
 fi
 
@@ -781,18 +781,18 @@ fi
 # Function to handle existing container
 handle_existing_container() {
   if docker ps -a --format "table {{.Names}}" | grep -q "^${CONTAINER_NAME}$"; then
-    echo -e "${YELLOW}Container $CONTAINER_NAME already exists.${NC}"
+    echo -e "${MAGENTA}Container ${BRIGHT_CYAN}$CONTAINER_NAME${MAGENTA} already exists.${NC}"
 
     # Check if container is running
     if docker ps --format "table {{.Names}}" | grep -q "^${CONTAINER_NAME}$"; then
-      echo -e "${GREEN}Container $CONTAINER_NAME is already running. Executing command in existing container...${NC}"
+      echo -e "${MAGENTA}Container ${BRIGHT_CYAN}$CONTAINER_NAME${MAGENTA} is already running. Executing command in existing container...${NC}"
       if [[ $# -gt 0 ]]; then
         exec docker exec -it "$CONTAINER_NAME" "$@"
       else
         exec docker exec -it "$CONTAINER_NAME" /bin/zsh
       fi
     else
-      echo -e "${YELLOW}Container $CONTAINER_NAME exists but is not running. Starting it...${NC}"
+      echo -e "${MAGENTA}Container ${BRIGHT_CYAN}$CONTAINER_NAME${MAGENTA} exists but is not running. Starting it...${NC}"
       if [[ $# -gt 0 ]]; then
         # Start container and then execute command in it
         docker start "$CONTAINER_NAME" >/dev/null
@@ -808,7 +808,7 @@ handle_existing_container() {
 # Handle existing container removal if recreate is requested
 if [[ "$RECREATE_CONTAINER" == "true" ]]; then
   if docker ps -a --format "table {{.Names}}" | grep -q "^${CONTAINER_NAME}$"; then
-    echo -e "${YELLOW}Removing existing container $CONTAINER_NAME...${NC}"
+    echo -e "${MAGENTA}Removing existing container ${BRIGHT_CYAN}$CONTAINER_NAME${MAGENTA}...${NC}"
     docker stop "$CONTAINER_NAME" >/dev/null 2>&1 || true
     docker rm "$CONTAINER_NAME" >/dev/null
   fi
