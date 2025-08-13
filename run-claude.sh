@@ -309,6 +309,9 @@ fi
 
 DOCKER_CMD="$DOCKER_CMD --name $CONTAINER_NAME"
 
+# Use host network to allow access to localhost services
+DOCKER_CMD="$DOCKER_CMD --network host"
+
 # Add labels for container identification
 DOCKER_CMD="$DOCKER_CMD --label run-claude.managed=true"
 DOCKER_CMD="$DOCKER_CMD --label run-claude.workspace=$WORKSPACE_PATH"
