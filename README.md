@@ -268,64 +268,64 @@ docker rm claude-code
 ## How It Works
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                                HOST SYSTEM                                      │
-├─────────────────────────────────────────────────────────────────────────────────┤
-│  ./run-claude.sh                                                               │
-│      │                                                                         │
-│      ├─ 1. Check if Docker image exists                                        │
-│      │     ├─ NO  → Build embedded Dockerfile                                  │
-│      │     └─ YES → Continue                                                   │
-│      │                                                                         │
-│      ├─ 2. Check if container exists                                           │
-│      │     ├─ RUNNING   → Execute in existing container                        │
-│      │     ├─ STOPPED   → Remove & create new                                  │
-│      │     └─ MISSING   → Create new container                                 │
-│      │                                                                         │
-│      └─ 3. Mount volumes & forward env vars                                    │
-│             │                                                                  │
-│             ▼                                                                  │
-├─────────────────────────────────────────────────────────────────────────────────┤
-│  DOCKER CONTAINER (Ubuntu 25.04 + Claude + MCP)                               │
-│                                                                                 │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐                │
-│  │   Unsplash MCP  │  │   Context7 MCP  │  │ Playwright MCP  │                │
-│  │   (Pre-built)   │  │   (HTTP/Web)    │  │   (npm global)  │                │
-│  └─────────────────┘  └─────────────────┘  └─────────────────┘                │
-│                                 │                                              │
-│  ┌─────────────────────────────────────────────────────────────┐               │
-│  │               CLAUDE CODE                                   │               │
-│  │         (--dangerously-skip-permissions)                    │               │
-│  └─────────────────────────────────────────────────────────────┘               │
-│                                 │                                              │
-│  ┌─────────────────────────────────────────────────────────────┐               │
-│  │  ZSH + Oh-My-Zsh + LazyVim + Dev Tools                     │               │
-│  │  • Node.js (via fnm)  • Go  • Python  • Git  • Build tools │               │
-│  └─────────────────────────────────────────────────────────────┘               │
-│                                                                                 │
-│  MOUNTED VOLUMES (Read/Write):                                                  │
-│  • ~/.claude      → Container config                                           │
-│  • $(pwd)         → Working directory                                          │
-│                                                                                 │
-│  MOUNTED VOLUMES (Read-Only):                                                   │
-│  • ~/.ssh         → SSH keys                                                   │
-│  • ~/.gitconfig   → Git configuration                                          │
-│                                                                                 │
-│  ENV FORWARDED:                                                                 │
-│  • API Keys (Unsplash, OpenAI, etc.)                                           │
-│  • CLAUDE_DANGEROUS_MODE=1                                                      │
-└─────────────────────────────────────────────────────────────────────────────────┘
++---------------------------------------------------------------------------------+
+|                                HOST SYSTEM                                     |
++---------------------------------------------------------------------------------+
+|  ./run-claude.sh                                                               |
+|      |                                                                         |
+|      +-- 1. Check if Docker image exists                                       |
+|      |     +-- NO  -> Pull from Docker Hub (or build if pull fails)           |
+|      |     +-- YES -> Continue                                                 |
+|      |                                                                         |
+|      +-- 2. Check if container exists                                          |
+|      |     +-- RUNNING  -> Execute in existing container                       |
+|      |     +-- STOPPED  -> Remove & create new                                 |
+|      |     +-- MISSING  -> Create new container                                |
+|      |                                                                         |
+|      +-- 3. Mount volumes & forward env vars                                   |
+|             |                                                                  |
+|             v                                                                  |
++---------------------------------------------------------------------------------+
+|  DOCKER CONTAINER (Ubuntu 25.04 + Claude + MCP)                               |
+|                                                                                 |
+|  +---------------+  +---------------+  +---------------+                      |
+|  | Unsplash MCP  |  | Context7 MCP  |  | Playwright MCP|                      |
+|  | (Pre-built)   |  | (HTTP/Web)    |  | (npm global)  |                      |
+|  +---------------+  +---------------+  +---------------+                      |
+|                                 |                                              |
+|  +-------------------------------------------------------------+               |
+|  |               CLAUDE CODE                                   |               |
+|  |         (--dangerously-skip-permissions)                    |               |
+|  +-------------------------------------------------------------+               |
+|                                 |                                              |
+|  +-------------------------------------------------------------+               |
+|  |  ZSH + Oh-My-Zsh + LazyVim + Dev Tools                     |               |
+|  |  * Node.js (via fnm)  * Go  * Python  * Git  * Build tools|               |
+|  +-------------------------------------------------------------+               |
+|                                                                                 |
+|  MOUNTED VOLUMES (Read/Write):                                                  |
+|  * ~/.claude      -> Container config                                          |
+|  * $(pwd)         -> Working directory                                         |
+|                                                                                 |
+|  MOUNTED VOLUMES (Read-Only):                                                   |
+|  * ~/.ssh         -> SSH keys                                                  |
+|  * ~/.gitconfig   -> Git configuration                                         |
+|                                                                                 |
+|  ENV FORWARDED:                                                                 |
+|  * API Keys (Unsplash, OpenAI, etc.)                                           |
+|  * CLAUDE_DANGEROUS_MODE=1                                                      |
++---------------------------------------------------------------------------------+
 
-🔒 ISOLATION BENEFITS:
-  ✅ Host system protected by Docker boundaries
-  ✅ All dangerous operations contained in container
-  ✅ Persistent containers for faster startup
-  ✅ Pre-configured MCP servers ready to use
+ISOLATION BENEFITS:
+  [+] Host system protected by Docker boundaries
+  [+] All dangerous operations contained in container
+  [+] Persistent containers for faster startup
+  [+] Pre-configured MCP servers ready to use
 
-⚠️  YOLO MODE:
-  • Container runs with --privileged flag
-  • Claude runs with --dangerously-skip-permissions
-  • Use only with trusted projects!
+YOLO MODE:
+  [!] Container runs with --privileged flag
+  [!] Claude runs with --dangerously-skip-permissions
+  [!] Use only with trusted projects!
 ```
 
 The `run-claude.sh` script is completely self-contained:
