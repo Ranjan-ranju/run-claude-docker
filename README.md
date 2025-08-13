@@ -14,6 +14,7 @@ Run claude code in somewhat safe and isolated yolo mode
 ## Quick Start
 
 ### Prerequisites
+
 - Docker installed and running
 - Claude authentication configured (`claude auth`)
 - Environment variables for MCP servers (e.g., `UNSPLASH_ACCESS_KEY`)
@@ -38,6 +39,7 @@ chmod +x run-claude.sh
 ## Script Options
 
 ### Build Commands
+
 ```bash
 # Build Docker image and exit
 ./run-claude.sh --build
@@ -47,6 +49,7 @@ chmod +x run-claude.sh
 ```
 
 ### Runtime Options
+
 ```bash
 # Custom workspace
 ./run-claude.sh -w /path/to/project
@@ -77,6 +80,7 @@ chmod +x run-claude.sh
 ```
 
 ### Container Persistence
+
 By default, the script creates a persistent container named `claude-code` that is reused across runs:
 
 - **First run**: Creates and starts the container
@@ -89,7 +93,9 @@ This behavior significantly reduces startup time on subsequent runs since the co
 ## What's Included
 
 ### Embedded Dockerfile
+
 The script contains a complete Dockerfile that includes:
+
 - Ubuntu 22.04 base image
 - Claude Code installation
 - Go, Node.js, Python, and build tools
@@ -97,7 +103,9 @@ The script contains a complete Dockerfile that includes:
 - All MCP servers pre-configured
 
 ### MCP Servers
+
 Automatically configured and ready to use:
+
 - **Unsplash**: Photo search and download (`unsplash-mcp-server`)
 - **Context7**: AI context service (`https://mcp.context7.com/mcp`)
 - **Playwright**: Browser automation (`@playwright/mcp@latest`)
@@ -105,9 +113,11 @@ Automatically configured and ready to use:
 ### Environment Variables
 
 #### Script Configuration
+
 - `CLAUDE_CODE_IMAGE_NAME` - Override default Docker Hub image (default: `icanhasjonas/claude-code`)
 
-#### Automatically forwarded from host:
+#### Automatically forwarded from host
+
 - `UNSPLASH_ACCESS_KEY`
 - `OPENAI_API_KEY`
 - `NUGET_API_KEY`
@@ -115,7 +125,9 @@ Automatically configured and ready to use:
 - `NODE_OPTIONS=--max-old-space-size=8192`
 
 ### Volume Mounts
+
 Automatically mounted:
+
 - Workspace: `$(pwd)` → `/home/$(whoami)/workspace`
 - Claude config: `~/.claude` → `/home/$(whoami)/.claude`
 - SSH keys: `~/.ssh` → `/home/$(whoami)/.ssh` (read-only)
@@ -124,6 +136,7 @@ Automatically mounted:
 ## Testing the Setup
 
 ### 1. First Run (Auto-pull)
+
 ```bash
 # First run will automatically pull the pre-built image from Docker Hub
 ./run-claude.sh claude auth status
@@ -133,6 +146,7 @@ Automatically mounted:
 ```
 
 ### 2. Test Build Commands
+
 ```bash
 # Build image only (useful for CI/CD)
 ./run-claude.sh --build
@@ -142,6 +156,7 @@ Automatically mounted:
 ```
 
 ### 3. Test File Operations
+
 ```bash
 # Create test project
 mkdir test-project
@@ -156,17 +171,19 @@ cat test.js
 ```
 
 ### 4. Test MCP Integration
+
 ```bash
 # Test Unsplash MCP
 ./run-claude.sh claude "find a photo of mountains using unsplash"
 
-# Test Playwright MCP  
+# Test Playwright MCP
 ./run-claude.sh claude "take a screenshot of google.com"
 ```
 
 ## Advanced Usage
 
 ### Custom Image Names
+
 ```bash
 # Use custom image name
 ./run-claude.sh -i my-claude:v1.0
@@ -176,6 +193,7 @@ cat test.js
 ```
 
 ### Verbose Output
+
 ```bash
 # Show docker command being executed
 RUN_CLAUDE_VERBOSE=1 ./run-claude.sh
@@ -186,6 +204,7 @@ RUN_CLAUDE_VERBOSE=1 ./run-claude.sh
 ```
 
 ### Environment Variable Setup
+
 ```bash
 # Set required environment variables
 export UNSPLASH_ACCESS_KEY="your-key-here"
@@ -203,18 +222,21 @@ source ~/.bashrc
 ## Security Notes
 
 ### Container Security
+
 - ✅ **Host isolation**: Host system protected by Docker boundaries
 - ✅ **Read-only mounts**: SSH keys and system configs mounted read-only
 - ✅ **User isolation**: Runs as non-root user inside container
 - ⚠️ **Privileged mode**: Required for dangerous permissions functionality
 
 ### Dangerous Permissions
+
 - Container has `--privileged` flag for full system access within container
 - Claude runs with `--dangerously-skip-permissions` by default
 - Only use with trusted code and repositories
 - All file modifications are contained within mounted volumes
 
 ### Best Practices
+
 1. Only mount directories you want Claude to access
 2. Use read-only mounts for sensitive configs
 3. Regularly rebuild image for security updates
@@ -224,12 +246,14 @@ source ~/.bashrc
 ## Troubleshooting
 
 ### Permission Issues
+
 ```bash
 # Fix workspace permissions
 docker run --rm -v $(pwd):/workspace claude-code:latest sudo chown -R claude:claude /workspace
 ```
 
 ### Authentication Issues
+
 ```bash
 # Check Claude config
 ./run-claude.sh claude auth status
@@ -239,6 +263,7 @@ docker run --rm -v $(pwd):/workspace claude-code:latest sudo chown -R claude:cla
 ```
 
 ### Image Not Found
+
 ```bash
 # Force rebuild image
 ./run-claude.sh --rebuild
@@ -251,6 +276,7 @@ docker images | grep claude
 ```
 
 ### Container Management
+
 ```bash
 # List containers
 docker ps -a | grep claude
@@ -268,64 +294,64 @@ docker rm claude-code
 ## How It Works
 
 ```
-+---------------------------------------------------------------------------------+
-|                                HOST SYSTEM                                     |
-+---------------------------------------------------------------------------------+
-|  ./run-claude.sh                                                               |
-|      |                                                                         |
-|      +-- 1. Check if Docker image exists                                       |
-|      |     +-- NO  -> Pull from Docker Hub (or build if pull fails)           |
-|      |     +-- YES -> Continue                                                 |
-|      |                                                                         |
-|      +-- 2. Check if container exists                                          |
-|      |     +-- RUNNING  -> Execute in existing container                       |
-|      |     +-- STOPPED  -> Remove & create new                                 |
-|      |     +-- MISSING  -> Create new container                                |
-|      |                                                                         |
-|      +-- 3. Mount volumes & forward env vars                                   |
-|             |                                                                  |
-|             v                                                                  |
-+---------------------------------------------------------------------------------+
-|  DOCKER CONTAINER (Ubuntu 25.04 + Claude + MCP)                               |
-|                                                                                 |
-|  +---------------+  +---------------+  +---------------+                      |
-|  | Unsplash MCP  |  | Context7 MCP  |  | Playwright MCP|                      |
-|  | (Pre-built)   |  | (HTTP/Web)    |  | (npm global)  |                      |
-|  +---------------+  +---------------+  +---------------+                      |
-|                                 |                                              |
-|  +-------------------------------------------------------------+               |
-|  |               CLAUDE CODE                                   |               |
-|  |         (--dangerously-skip-permissions)                    |               |
-|  +-------------------------------------------------------------+               |
-|                                 |                                              |
-|  +-------------------------------------------------------------+               |
-|  |  ZSH + Oh-My-Zsh + LazyVim + Dev Tools                     |               |
-|  |  * Node.js (via fnm)  * Go  * Python  * Git  * Build tools|               |
-|  +-------------------------------------------------------------+               |
-|                                                                                 |
-|  MOUNTED VOLUMES (Read/Write):                                                  |
-|  * ~/.claude      -> Container config                                          |
-|  * $(pwd)         -> Working directory                                         |
-|                                                                                 |
-|  MOUNTED VOLUMES (Read-Only):                                                   |
-|  * ~/.ssh         -> SSH keys                                                  |
-|  * ~/.gitconfig   -> Git configuration                                         |
-|                                                                                 |
-|  ENV FORWARDED:                                                                 |
-|  * API Keys (Unsplash, OpenAI, etc.)                                           |
-|  * CLAUDE_DANGEROUS_MODE=1                                                      |
-+---------------------------------------------------------------------------------+
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                                HOST SYSTEM                                      │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│  ./run-claude.sh                                                                │
+│      │                                                                          │
+│      ├─ 1. Check if Docker image exists                                         │
+│      │     ├─ NO  → Build embedded Dockerfile                                   │
+│      │     └─ YES → Continue                                                    │
+│      │                                                                          │
+│      ├─ 2. Check if container exists                                            │
+│      │     ├─ RUNNING   → Execute in existing container                         │
+│      │     ├─ STOPPED   → Remove & create new                                   │
+│      │     └─ MISSING   → Create new container                                  │
+│      │                                                                          │
+│      └─ 3. Mount volumes & forward env vars                                     │
+│             │                                                                   │
+│             ▼                                                                   │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│  DOCKER CONTAINER (Ubuntu 25.04 + Claude + MCP)                                 │
+│                                                                                 │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐                  │
+│  │   Unsplash MCP  │  │   Context7 MCP  │  │ Playwright MCP  │                  │
+│  │   (Pre-built)   │  │   (HTTP/Web)    │  │   (npm global)  │                  │
+│  └─────────────────┘  └─────────────────┘  └─────────────────┘                  │
+│                                 │                                               │
+│  ┌─────────────────────────────────────────────────────────────┐                │
+│  │               CLAUDE CODE                                   │                │
+│  │         (--dangerously-skip-permissions)                    │                │
+│  └─────────────────────────────────────────────────────────────┘                │
+│                                 │                                               │
+│  ┌─────────────────────────────────────────────────────────────┐                │
+│  │  ZSH + Oh-My-Zsh + LazyVim + Dev Tools                     │                 │
+│  │  • Node.js (via fnm)  • Go  • Python  • Git  • Build tools │                 │
+│  └─────────────────────────────────────────────────────────────┘                │
+│                                                                                 │
+│  MOUNTED VOLUMES (Read/Write):                                                  │
+│  • ~/.claude      → Container config                                            │
+│  • $(pwd)         → Working directory                                           │
+│                                                                                 │
+│  MOUNTED VOLUMES (Read-Only):                                                   │
+│  • ~/.ssh         → SSH keys                                                    │
+│  • ~/.gitconfig   → Git configuration                                           │
+│                                                                                 │
+│  ENV FORWARDED:                                                                 │
+│  • API Keys (Unsplash, OpenAI, etc.)                                            │
+│  • CLAUDE_DANGEROUS_MODE=1                                                      │
+└─────────────────────────────────────────────────────────────────────────────────┘
 
-ISOLATION BENEFITS:
-  [+] Host system protected by Docker boundaries
-  [+] All dangerous operations contained in container
-  [+] Persistent containers for faster startup
-  [+] Pre-configured MCP servers ready to use
+🔒 ISOLATION BENEFITS:
+  ✅ Host system protected by Docker boundaries
+  ✅ All dangerous operations contained in container
+  ✅ Persistent containers for faster startup
+  ✅ Pre-configured MCP servers ready to use
 
-YOLO MODE:
-  [!] Container runs with --privileged flag
-  [!] Claude runs with --dangerously-skip-permissions
-  [!] Use only with trusted projects!
+⚠️  YOLO MODE:
+  • Container runs with --privileged flag
+  • Claude runs with --dangerously-skip-permissions
+  • Use only with trusted projects!
 ```
 
 The `run-claude.sh` script is completely self-contained:
@@ -350,14 +376,17 @@ The Dockerfile is **embedded directly** in the `run-claude.sh` script to maintai
 
 1. **Edit the embedded Dockerfile** in the `generate_dockerfile_content()` function
 2. **Test your changes** by rebuilding the container:
+
    ```bash
    # Build new image and test (doesn't run container)
    ./run-claude.sh --build
-   
-   # Or rebuild and run container immediately  
+
+   # Or rebuild and run container immediately
    ./run-claude.sh --rebuild
    ```
+
 3. **Export for standalone use** (optional):
+
    ```bash
    # Export current Dockerfile for inspection or external use
    ./run-claude.sh --export-dockerfile Dockerfile
@@ -380,7 +409,7 @@ The Dockerfile is **embedded directly** in the `run-claude.sh` script to maintai
 # Option 1: Build only (test build process)
 ./run-claude.sh --build
 
-# Option 2: Rebuild and test (full workflow) 
+# Option 2: Rebuild and test (full workflow)
 ./run-claude.sh --rebuild
 
 # Option 3: Export and inspect
@@ -389,3 +418,4 @@ less debug.dockerfile
 ```
 
 This workflow ensures that the container changes are properly tested while maintaining the tool's self-contained design.
+
