@@ -879,4 +879,10 @@ if [[ "$REMOVE_CONTAINER" == "false" && "$RECREATE_CONTAINER" == "false" ]]; the
 fi
 
 # Execute the command (for new containers or when --rm is used)
-exec $DOCKER_CMD
+if ! exec $DOCKER_CMD; then
+  echo -e "${RED}Failed to run Docker container.${NC}"
+  echo -e "${YELLOW}If this failed due to architecture issues (e.g., Apple Silicon/arm64), try:${NC}"
+  echo -e "${BRIGHT_CYAN}  $0 --build${NC}"
+  echo -e "${YELLOW}This will build a local image compatible with your architecture.${NC}"
+  exit 1
+fi

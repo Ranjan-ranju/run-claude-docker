@@ -69,6 +69,9 @@ chmod +x run-claude.sh
 
 # Custom workspace
 ./run-claude.sh -w /path/to/project
+
+# If run-claude.sh fails due to architecture issues, build locally
+./run-claude.sh --build
 ```
 
 ## Script Options
