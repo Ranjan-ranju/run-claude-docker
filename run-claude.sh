@@ -344,6 +344,19 @@ if [[ -n "$UNSPLASH_ACCESS_KEY" ]]; then
   DOCKER_CMD="$DOCKER_CMD -e UNSPLASH_ACCESS_KEY=$UNSPLASH_ACCESS_KEY"
 fi
 
+# Forward OAuth account if it exists
+if [[ -f "$HOME/.claude.json" ]]; then
+  OAUTH_ACCOUNT=$(jq -c '.oauthAccount // empty' "$HOME/.claude.json" 2>/dev/null || echo "")
+  if [[ -n "$OAUTH_ACCOUNT" && "$OAUTH_ACCOUNT" != "null" && "$OAUTH_ACCOUNT" != '""' ]]; then
+    # Base64 encode to avoid shell escaping issues
+    OAUTH_ACCOUNT_B64=$(printf '%s' "$OAUTH_ACCOUNT" | base64 | tr -d '\n')
+    if [[ "$VERBOSE" == "true" ]]; then
+      echo -e "${YELLOW}OAuth account detected and will be merged in container${NC}"
+    fi
+    DOCKER_CMD="$DOCKER_CMD -e CLAUDE_OAUTH_ACCOUNT_B64=$OAUTH_ACCOUNT_B64"
+  fi
+fi
+
 # Add volume mounts
 DOCKER_CMD="$DOCKER_CMD -v $CLAUDE_CONFIG_PATH:/home/$CURRENT_USER/.claude"
 DOCKER_CMD="$DOCKER_CMD -v $WORKSPACE_PATH:/home/$CURRENT_USER/$WORKSPACE_BASENAME"
@@ -630,9 +643,35 @@ FROM claude-mcp AS final
 USER root
 RUN cat > /entrypoint.sh << 'EOF'
 #!/bin/sh
+
+# Merge OAuth account if provided
+if [ -n "$CLAUDE_OAUTH_ACCOUNT_B64" ]; then
+  CLAUDE_JSON="$HOME/.claude.json"
+  
+  # Decode base64 OAuth account
+  CLAUDE_OAUTH_ACCOUNT=$(echo "$CLAUDE_OAUTH_ACCOUNT_B64" | tr -d '\n' | base64 -d)
+  
+  if [ ! -f "$CLAUDE_JSON" ] || ! jq -e '.oauthAccount' "$CLAUDE_JSON" >/dev/null 2>&1; then
+    if [ -f "$CLAUDE_JSON" ]; then
+      # Merge with existing file
+      cat "$CLAUDE_JSON" | jq --argjson oauth "$CLAUDE_OAUTH_ACCOUNT" '.oauthAccount = $oauth' > "$CLAUDE_JSON.tmp" && mv "$CLAUDE_JSON.tmp" "$CLAUDE_JSON"
+    else
+      # Create new file with OAuth account
+      echo "{\"oauthAccount\": $CLAUDE_OAUTH_ACCOUNT}" | jq . > "$CLAUDE_JSON"
+    fi
+    echo "OAuth account merged into .claude.json"
+  fi
+  
+  # Unset the environment variables for security
+  unset CLAUDE_OAUTH_ACCOUNT_B64
+  unset CLAUDE_OAUTH_ACCOUNT
+fi
+
+# Change to workspace directory if provided
 if [ -n "$WORKSPACE_PATH" ] && [ -d "$WORKSPACE_PATH" ]; then
   cd "$WORKSPACE_PATH"
 fi
+
 exec "$@"
 EOF
 RUN chmod +x /entrypoint.sh
