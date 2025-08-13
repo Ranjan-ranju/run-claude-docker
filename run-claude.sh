@@ -22,6 +22,7 @@ PRIVILEGED=true
 DANGEROUS_MODE=true
 BUILD_ONLY=false
 FORCE_REBUILD=false
+FORCE_PULL=false
 RECREATE_CONTAINER=false
 VERBOSE=false
 REMOVE_CONTAINERS=false
@@ -149,6 +150,7 @@ usage() {
   echo "  --no-privileged         Run without privileged mode"
   echo "  --safe                  Disable dangerous permissions"
   echo "  --build                 Build the Docker image and exit"
+  echo "  --pull                  Pull latest image from registry"
   echo "  --rebuild               Force rebuild the Docker image and continue"
   echo "  --recreate              Remove existing container and create new one"
   echo "  --verbose               Show detailed output including Docker commands"
@@ -238,6 +240,10 @@ while [[ $# -gt 0 ]]; do
     BUILD_ONLY=true
     shift
     ;;
+  --pull)
+    FORCE_PULL=true
+    shift
+    ;;
   --rebuild)
     FORCE_REBUILD=true
     shift
@@ -280,6 +286,13 @@ while [[ $# -gt 0 ]]; do
     ;;
   esac
 done
+
+# Validate conflicting options
+if [[ "$FORCE_PULL" == "true" && "$BUILD_ONLY" == "true" ]]; then
+  echo -e "${RED}Error: Cannot use --pull and --build together${NC}"
+  echo -e "${YELLOW}Choose one: --pull (to pull latest image) or --build (to build locally)${NC}"
+  exit 1
+fi
 
 # Validate paths
 if [[ ! -d "$WORKSPACE_PATH" ]]; then
@@ -819,7 +832,10 @@ if [[ "$BUILD_ONLY" == "true" ]]; then
   exit 0
 fi
 
-if [[ "$FORCE_REBUILD" == "true" ]]; then
+if [[ "$FORCE_PULL" == "true" ]]; then
+  echo -e "${YELLOW}Force pull requested - pulling latest image...${NC}"
+  pull_remote_image
+elif [[ "$FORCE_REBUILD" == "true" ]]; then
   echo -e "${YELLOW}Force rebuild requested - cleaning up first...${NC}"
 
   # Remove containers first to avoid conflicts
