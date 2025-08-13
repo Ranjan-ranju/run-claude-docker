@@ -325,8 +325,8 @@ docker rm claude-code
 │  └─────────────────────────────────────────────────────────────┘                │
 │                                 │                                               │
 │  ┌─────────────────────────────────────────────────────────────┐                │
-│  │  ZSH + Oh-My-Zsh + LazyVim + Dev Tools                     │                 │
-│  │  • Node.js (via fnm)  • Go  • Python  • Git  • Build tools │                 │
+│  │  ZSH + Oh-My-Zsh + LazyVim + Dev Tools                      │                │
+│  │  • Node.js (via fnm)  • Go  • Python  • Git  • Build tools  │                │
 │  └─────────────────────────────────────────────────────────────┘                │
 │                                                                                 │
 │  MOUNTED VOLUMES (Read/Write):                                                  │
@@ -418,4 +418,3 @@ less debug.dockerfile
 ```
 
 This workflow ensures that the container changes are properly tested while maintaining the tool's self-contained design.
-
