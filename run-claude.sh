@@ -26,12 +26,107 @@ RECREATE_CONTAINER=false
 VERBOSE=false
 REMOVE_CONTAINERS=false
 FORCE_REMOVE_ALL_CONTAINERS=false
+EXPORT_DOCKERFILE=""
 
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
+
+# Generate shell completions
+generate_completions() {
+  local shell="$1"
+  
+  if [[ -z "$shell" ]]; then
+    echo -e "${RED}Error: Shell type required. Use 'bash' or 'zsh'${NC}" >&2
+    exit 1
+  fi
+  
+  case "$shell" in
+    bash)
+      cat <<'EOF'
+_run_claude_completion() {
+    local cur prev opts
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+    
+    opts="-w --workspace -c --claude-config -n --name -i --image --rm --no-interactive --no-privileged --safe --build --rebuild --recreate --verbose --remove-containers --force-remove-all-containers --export-dockerfile --generate-completions -h --help"
+    
+    case "${prev}" in
+        -w|--workspace)
+            COMPREPLY=( $(compgen -d -- ${cur}) )
+            return 0
+            ;;
+        -c|--claude-config)
+            COMPREPLY=( $(compgen -d -- ${cur}) )
+            return 0
+            ;;
+        -n|--name)
+            COMPREPLY=( $(compgen -W "claude-code" -- ${cur}) )
+            return 0
+            ;;
+        -i|--image)
+            COMPREPLY=( $(compgen -W "claude-code:latest" -- ${cur}) )
+            return 0
+            ;;
+        --export-dockerfile)
+            COMPREPLY=( $(compgen -f -- ${cur}) )
+            return 0
+            ;;
+        --generate-completions)
+            COMPREPLY=( $(compgen -W "bash zsh" -- ${cur}) )
+            return 0
+            ;;
+        *)
+            ;;
+    esac
+    
+    COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+    return 0
+}
+complete -F _run_claude_completion run-claude.sh
+EOF
+      ;;
+    zsh)
+      cat <<'EOF'
+_run_claude_zsh_completion() {
+    local -a options
+    options=(
+        '-w[Set workspace path]:workspace:_files -/'
+        '--workspace[Set workspace path]:workspace:_files -/'
+        '-c[Set Claude config path]:config:_files -/'
+        '--claude-config[Set Claude config path]:config:_files -/'
+        '-n[Set container name]:name:'
+        '--name[Set container name]:name:'
+        '-i[Set image name]:image:'
+        '--image[Set image name]:image:'
+        '--rm[Remove container after exit]'
+        '--no-interactive[Run in non-interactive mode]'
+        '--no-privileged[Run without privileged mode]'
+        '--safe[Disable dangerous permissions]'
+        '--build[Build the Docker image and exit]'
+        '--rebuild[Force rebuild the Docker image and continue]'
+        '--recreate[Remove existing container and create new one]'
+        '--verbose[Show detailed output including Docker commands]'
+        '--remove-containers[Remove stopped Claude Code containers and exit]'
+        '--force-remove-all-containers[Remove ALL Claude Code containers and exit]'
+        '--export-dockerfile[Export the embedded Dockerfile]:file:_files'
+        '--generate-completions[Generate shell completions]:shell:(bash zsh)'
+        '(-h --help)'{-h,--help}'[Show help]'
+    )
+    _arguments -s -S $options
+}
+compdef _run_claude_zsh_completion run-claude.sh
+EOF
+      ;;
+    *)
+      echo -e "${RED}Error: Unsupported shell '$shell'. Use 'bash' or 'zsh'${NC}" >&2
+      exit 1
+      ;;
+  esac
+}
 
 usage() {
   echo "Usage: $0 [OPTIONS] [COMMAND]"
@@ -52,6 +147,10 @@ usage() {
   echo "  --remove-containers     Remove stopped Claude Code containers and exit"
   echo "  --force-remove-all-containers"
   echo "                          Remove ALL Claude Code containers (including active ones) and exit"
+  echo "  --export-dockerfile FILE"
+  echo "                          Export the embedded Dockerfile to specified file and exit"
+  echo "  --generate-completions SHELL"
+  echo "                          Generate shell completions (bash|zsh) and exit"
   echo "  -h, --help              Show this help"
   echo ""
   echo "EXAMPLES:"
@@ -72,6 +171,13 @@ usage() {
   echo ""
   echo "  # Force rebuild image and run"
   echo "  $0 --rebuild"
+  echo ""
+  echo "  # Install shell completions"
+  echo "  # For bash:"
+  echo "  echo 'eval \"\$($0 --generate-completions bash)\"' >> ~/.bashrc"
+  echo ""
+  echo "  # For zsh:"
+  echo "  echo 'eval \"\$($0 --generate-completions zsh)\"' >> ~/.zshrc"
 }
 
 # Parse arguments
@@ -132,6 +238,14 @@ while [[ $# -gt 0 ]]; do
   --force-remove-all-containers)
     FORCE_REMOVE_ALL_CONTAINERS=true
     shift
+    ;;
+  --export-dockerfile)
+    EXPORT_DOCKERFILE="$2"
+    shift 2
+    ;;
+  --generate-completions)
+    generate_completions "$2"
+    exit 0
     ;;
   -h | --help)
     usage
@@ -245,8 +359,118 @@ build_image() {
   TEMP_DIR=$(mktemp -d)
   trap "rm -rf $TEMP_DIR" EXIT
 
-  # Extract embedded Dockerfile
-  cat >"$TEMP_DIR/Dockerfile" <<'DOCKERFILE_EOF'
+  # Generate Dockerfile using shared function
+  generate_dockerfile_content > "$TEMP_DIR/Dockerfile"
+
+  # Build the image
+  if docker build --build-arg USERNAME="$CURRENT_USER" -t "$IMAGE_NAME" "$TEMP_DIR"; then
+    echo -e "${GREEN}Successfully built $IMAGE_NAME${NC}"
+  else
+    echo -e "${RED}Failed to build Docker image${NC}"
+    exit 1
+  fi
+}
+
+# Function to check if image exists and build if necessary
+build_image_if_missing() {
+  if ! docker image inspect "$IMAGE_NAME" &>/dev/null; then
+    echo -e "${YELLOW}Docker image $IMAGE_NAME not found. Building it now...${NC}"
+    build_image
+  fi
+}
+
+# Function to remove stopped Claude Code containers using labels
+remove_stopped_containers() {
+  echo -e "${GREEN}Searching for Claude Code containers...${NC}"
+  
+  # Find all containers with our label
+  ALL_CONTAINERS=$(docker ps -aq --filter "label=run-claude.managed=true" 2>/dev/null || true)
+  
+  if [[ -z "$ALL_CONTAINERS" ]]; then
+    echo -e "${YELLOW}No Claude Code containers found.${NC}"
+    return 0
+  fi
+  
+  # Find running containers with our label
+  RUNNING_CONTAINERS=$(docker ps -q --filter "label=run-claude.managed=true" 2>/dev/null || true)
+  
+  # Find stopped containers (all - running)
+  STOPPED_CONTAINERS=""
+  for container in $ALL_CONTAINERS; do
+    if ! echo "$RUNNING_CONTAINERS" | grep -q "$container"; then
+      STOPPED_CONTAINERS="$STOPPED_CONTAINERS $container"
+    fi
+  done
+  
+  # Display all containers with status
+  echo -e "${YELLOW}Found the following Claude Code containers:${NC}"
+  docker ps -a --filter "label=run-claude.managed=true" --format "table {{.Names}}\t{{.Status}}\t{{.Label \"run-claude.workspace\"}}" 2>/dev/null || true
+  echo ""
+  
+  # Handle running containers
+  if [[ -n "$RUNNING_CONTAINERS" ]]; then
+    echo -e "${YELLOW}Active containers (not removed):${NC}"
+    for container in $RUNNING_CONTAINERS; do
+      CONTAINER_NAME=$(docker inspect --format '{{.Name}}' "$container" | sed 's|^/||')
+      echo -e "${YELLOW}  - $CONTAINER_NAME (running)${NC}"
+      echo -e "    ${GREEN}To force remove:${NC}"
+      echo -e "      \033[2mdocker stop \033[1m$CONTAINER_NAME\033[0m\033[2m && docker rm \033[1m$CONTAINER_NAME\033[0m"
+    done
+    echo ""
+  fi
+  
+  # Remove stopped containers
+  if [[ -n "$(echo $STOPPED_CONTAINERS | xargs)" ]]; then
+    echo -e "${GREEN}Removing stopped containers...${NC}"
+    docker rm $(echo $STOPPED_CONTAINERS | xargs) >/dev/null 2>&1 || true
+    echo -e "${GREEN}Stopped Claude Code containers have been removed.${NC}"
+  else
+    echo -e "${YELLOW}No stopped containers to remove.${NC}"
+  fi
+}
+
+# Function to force remove ALL Claude Code containers with warning
+force_remove_all_containers() {
+  echo -e "${RED}⚠️  WARNING: Force removing ALL Claude Code containers!${NC}"
+  echo -e "${RED}This will STOP and DELETE all containers, including active ones.${NC}"
+  echo -e "${RED}Any unsaved work in running containers will be LOST!${NC}"
+  echo ""
+  
+  # Find all containers with our label
+  ALL_CONTAINERS=$(docker ps -aq --filter "label=run-claude.managed=true" 2>/dev/null || true)
+  
+  if [[ -z "$ALL_CONTAINERS" ]]; then
+    echo -e "${YELLOW}No Claude Code containers found.${NC}"
+    return 0
+  fi
+  
+  # Display all containers with status
+  echo -e "${YELLOW}Found the following Claude Code containers:${NC}"
+  docker ps -a --filter "label=run-claude.managed=true" --format "table {{.Names}}\t{{.Status}}\t{{.Label \"run-claude.workspace\"}}" 2>/dev/null || true
+  echo ""
+  
+  # Ask for confirmation
+  echo -e "${RED}Are you sure you want to force remove ALL containers? [y/N]:${NC} "
+  read -r CONFIRM
+  
+  if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
+    echo -e "${YELLOW}Operation cancelled.${NC}"
+    return 0
+  fi
+  
+  echo ""
+  echo -e "${GREEN}Force stopping all containers...${NC}"
+  docker stop $ALL_CONTAINERS >/dev/null 2>&1 || true
+  
+  echo -e "${GREEN}Removing all containers...${NC}"
+  docker rm $ALL_CONTAINERS >/dev/null 2>&1 || true
+  
+  echo -e "${GREEN}All Claude Code containers have been force removed.${NC}"
+}
+
+# Function to generate Dockerfile content
+generate_dockerfile_content() {
+  cat <<'DOCKERFILE_EOF'
 # vim: set ft=dockerfile:
 FROM ubuntu:25.04
 
@@ -360,114 +584,32 @@ WORKDIR /home/$USERNAME
 ENTRYPOINT ["/bin/sh", "-c", "echo \"WORKSPACE_PATH is: $WORKSPACE_PATH\"; if [ -n \"$WORKSPACE_PATH\" ] && [ -d \"$WORKSPACE_PATH\" ]; then echo \"Changing to $WORKSPACE_PATH\"; cd \"$WORKSPACE_PATH\"; else echo \"Not changing directory - path not found or not set\"; fi; exec \"$@\"", "--"]
 CMD ["/bin/zsh"]
 DOCKERFILE_EOF
+}
 
-  # Build the image
-  if docker build --build-arg USERNAME="$CURRENT_USER" -t "$IMAGE_NAME" "$TEMP_DIR"; then
-    echo -e "${GREEN}Successfully built $IMAGE_NAME${NC}"
-  else
-    echo -e "${RED}Failed to build Docker image${NC}"
+# Function to export Dockerfile
+export_dockerfile() {
+  local OUTPUT_FILE="$1"
+  
+  if [[ -z "$OUTPUT_FILE" ]]; then
+    echo -e "${RED}Error: No output file specified${NC}"
     exit 1
   fi
-}
+  
+  echo -e "${GREEN}Exporting Dockerfile to: $OUTPUT_FILE${NC}"
+  
+  # Use the shared function to generate content
+  generate_dockerfile_content > "$OUTPUT_FILE"
 
-# Function to check if image exists and build if necessary
-build_image_if_missing() {
-  if ! docker image inspect "$IMAGE_NAME" &>/dev/null; then
-    echo -e "${YELLOW}Docker image $IMAGE_NAME not found. Building it now...${NC}"
-    build_image
-  fi
-}
-
-# Function to remove stopped Claude Code containers using labels
-remove_stopped_containers() {
-  echo -e "${GREEN}Searching for Claude Code containers...${NC}"
-  
-  # Find all containers with our label
-  ALL_CONTAINERS=$(docker ps -aq --filter "label=run-claude.managed=true" 2>/dev/null || true)
-  
-  if [[ -z "$ALL_CONTAINERS" ]]; then
-    echo -e "${YELLOW}No Claude Code containers found.${NC}"
-    return 0
-  fi
-  
-  # Find running containers with our label
-  RUNNING_CONTAINERS=$(docker ps -q --filter "label=run-claude.managed=true" 2>/dev/null || true)
-  
-  # Find stopped containers (all - running)
-  STOPPED_CONTAINERS=""
-  for container in $ALL_CONTAINERS; do
-    if ! echo "$RUNNING_CONTAINERS" | grep -q "$container"; then
-      STOPPED_CONTAINERS="$STOPPED_CONTAINERS $container"
-    fi
-  done
-  
-  # Display all containers with status
-  echo -e "${YELLOW}Found the following Claude Code containers:${NC}"
-  docker ps -a --filter "label=run-claude.managed=true" --format "table {{.Names}}\t{{.Status}}\t{{.Label \"run-claude.workspace\"}}" 2>/dev/null || true
-  echo ""
-  
-  # Handle running containers
-  if [[ -n "$RUNNING_CONTAINERS" ]]; then
-    echo -e "${YELLOW}Active containers (not removed):${NC}"
-    for container in $RUNNING_CONTAINERS; do
-      CONTAINER_NAME=$(docker inspect --format '{{.Name}}' "$container" | sed 's|^/||')
-      echo -e "${YELLOW}  - $CONTAINER_NAME (running)${NC}"
-      echo -e "    ${GREEN}To force remove:${NC}"
-      echo -e "      \033[2mdocker stop \033[1m$CONTAINER_NAME\033[0m\033[2m && docker rm \033[1m$CONTAINER_NAME\033[0m"
-    done
-    echo ""
-  fi
-  
-  # Remove stopped containers
-  if [[ -n "$(echo $STOPPED_CONTAINERS | xargs)" ]]; then
-    echo -e "${GREEN}Removing stopped containers...${NC}"
-    docker rm $(echo $STOPPED_CONTAINERS | xargs) >/dev/null 2>&1 || true
-    echo -e "${GREEN}Stopped Claude Code containers have been removed.${NC}"
-  else
-    echo -e "${YELLOW}No stopped containers to remove.${NC}"
-  fi
-}
-
-# Function to force remove ALL Claude Code containers with warning
-force_remove_all_containers() {
-  echo -e "${RED}⚠️  WARNING: Force removing ALL Claude Code containers!${NC}"
-  echo -e "${RED}This will STOP and DELETE all containers, including active ones.${NC}"
-  echo -e "${RED}Any unsaved work in running containers will be LOST!${NC}"
-  echo ""
-  
-  # Find all containers with our label
-  ALL_CONTAINERS=$(docker ps -aq --filter "label=run-claude.managed=true" 2>/dev/null || true)
-  
-  if [[ -z "$ALL_CONTAINERS" ]]; then
-    echo -e "${YELLOW}No Claude Code containers found.${NC}"
-    return 0
-  fi
-  
-  # Display all containers with status
-  echo -e "${YELLOW}Found the following Claude Code containers:${NC}"
-  docker ps -a --filter "label=run-claude.managed=true" --format "table {{.Names}}\t{{.Status}}\t{{.Label \"run-claude.workspace\"}}" 2>/dev/null || true
-  echo ""
-  
-  # Ask for confirmation
-  echo -e "${RED}Are you sure you want to force remove ALL containers? [y/N]:${NC} "
-  read -r CONFIRM
-  
-  if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
-    echo -e "${YELLOW}Operation cancelled.${NC}"
-    return 0
-  fi
-  
-  echo ""
-  echo -e "${GREEN}Force stopping all containers...${NC}"
-  docker stop $ALL_CONTAINERS >/dev/null 2>&1 || true
-  
-  echo -e "${GREEN}Removing all containers...${NC}"
-  docker rm $ALL_CONTAINERS >/dev/null 2>&1 || true
-  
-  echo -e "${GREEN}All Claude Code containers have been force removed.${NC}"
+  echo -e "${GREEN}Dockerfile exported successfully!${NC}"
+  echo -e "${YELLOW}To build: docker build --build-arg USERNAME=\$(whoami) -t your-image-name .${NC}"
 }
 
 # Handle special commands
+if [[ -n "$EXPORT_DOCKERFILE" ]]; then
+  export_dockerfile "$EXPORT_DOCKERFILE"
+  exit 0
+fi
+
 if [[ "$REMOVE_CONTAINERS" == "true" ]]; then
   remove_stopped_containers
   exit 0
