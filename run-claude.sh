@@ -24,6 +24,8 @@ BUILD_ONLY=false
 FORCE_REBUILD=false
 RECREATE_CONTAINER=false
 VERBOSE=false
+REMOVE_CONTAINERS=false
+FORCE_REMOVE_ALL_CONTAINERS=false
 
 # Colors for output
 RED='\033[0;31m'
@@ -47,6 +49,9 @@ usage() {
   echo "  --rebuild               Force rebuild the Docker image and continue"
   echo "  --recreate              Remove existing container and create new one"
   echo "  --verbose               Show detailed output including Docker commands"
+  echo "  --remove-containers     Remove stopped Claude Code containers and exit"
+  echo "  --force-remove-all-containers"
+  echo "                          Remove ALL Claude Code containers (including active ones) and exit"
   echo "  -h, --help              Show this help"
   echo ""
   echo "EXAMPLES:"
@@ -120,6 +125,14 @@ while [[ $# -gt 0 ]]; do
     VERBOSE=true
     shift
     ;;
+  --remove-containers)
+    REMOVE_CONTAINERS=true
+    shift
+    ;;
+  --force-remove-all-containers)
+    FORCE_REMOVE_ALL_CONTAINERS=true
+    shift
+    ;;
   -h | --help)
     usage
     exit 0
@@ -158,6 +171,11 @@ if [[ "$PRIVILEGED" == "true" ]]; then
 fi
 
 DOCKER_CMD="$DOCKER_CMD --name $CONTAINER_NAME"
+
+# Add labels for container identification
+DOCKER_CMD="$DOCKER_CMD --label run-claude.managed=true"
+DOCKER_CMD="$DOCKER_CMD --label run-claude.workspace=$WORKSPACE_PATH"
+DOCKER_CMD="$DOCKER_CMD --label run-claude.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 # Get current user info
 CURRENT_USER=$(whoami)
@@ -355,7 +373,106 @@ build_image_if_missing() {
   fi
 }
 
-# Handle build commands
+# Function to remove stopped Claude Code containers using labels
+remove_stopped_containers() {
+  echo -e "${GREEN}Searching for Claude Code containers...${NC}"
+  
+  # Find all containers with our label
+  ALL_CONTAINERS=$(docker ps -aq --filter "label=run-claude.managed=true" 2>/dev/null || true)
+  
+  if [[ -z "$ALL_CONTAINERS" ]]; then
+    echo -e "${YELLOW}No Claude Code containers found.${NC}"
+    return 0
+  fi
+  
+  # Find running containers with our label
+  RUNNING_CONTAINERS=$(docker ps -q --filter "label=run-claude.managed=true" 2>/dev/null || true)
+  
+  # Find stopped containers (all - running)
+  STOPPED_CONTAINERS=""
+  for container in $ALL_CONTAINERS; do
+    if ! echo "$RUNNING_CONTAINERS" | grep -q "$container"; then
+      STOPPED_CONTAINERS="$STOPPED_CONTAINERS $container"
+    fi
+  done
+  
+  # Display all containers with status
+  echo -e "${YELLOW}Found the following Claude Code containers:${NC}"
+  docker ps -a --filter "label=run-claude.managed=true" --format "table {{.Names}}\t{{.Status}}\t{{.Label \"run-claude.workspace\"}}" 2>/dev/null || true
+  echo ""
+  
+  # Handle running containers
+  if [[ -n "$RUNNING_CONTAINERS" ]]; then
+    echo -e "${YELLOW}Active containers (not removed):${NC}"
+    for container in $RUNNING_CONTAINERS; do
+      CONTAINER_NAME=$(docker inspect --format '{{.Name}}' "$container" | sed 's|^/||')
+      echo -e "${YELLOW}  - $CONTAINER_NAME (running)${NC}"
+      echo -e "    ${GREEN}To force remove:${NC}"
+      echo -e "      \033[2mdocker stop \033[1m$CONTAINER_NAME\033[0m\033[2m && docker rm \033[1m$CONTAINER_NAME\033[0m"
+    done
+    echo ""
+  fi
+  
+  # Remove stopped containers
+  if [[ -n "$(echo $STOPPED_CONTAINERS | xargs)" ]]; then
+    echo -e "${GREEN}Removing stopped containers...${NC}"
+    docker rm $(echo $STOPPED_CONTAINERS | xargs) >/dev/null 2>&1 || true
+    echo -e "${GREEN}Stopped Claude Code containers have been removed.${NC}"
+  else
+    echo -e "${YELLOW}No stopped containers to remove.${NC}"
+  fi
+}
+
+# Function to force remove ALL Claude Code containers with warning
+force_remove_all_containers() {
+  echo -e "${RED}⚠️  WARNING: Force removing ALL Claude Code containers!${NC}"
+  echo -e "${RED}This will STOP and DELETE all containers, including active ones.${NC}"
+  echo -e "${RED}Any unsaved work in running containers will be LOST!${NC}"
+  echo ""
+  
+  # Find all containers with our label
+  ALL_CONTAINERS=$(docker ps -aq --filter "label=run-claude.managed=true" 2>/dev/null || true)
+  
+  if [[ -z "$ALL_CONTAINERS" ]]; then
+    echo -e "${YELLOW}No Claude Code containers found.${NC}"
+    return 0
+  fi
+  
+  # Display all containers with status
+  echo -e "${YELLOW}Found the following Claude Code containers:${NC}"
+  docker ps -a --filter "label=run-claude.managed=true" --format "table {{.Names}}\t{{.Status}}\t{{.Label \"run-claude.workspace\"}}" 2>/dev/null || true
+  echo ""
+  
+  # Ask for confirmation
+  echo -e "${RED}Are you sure you want to force remove ALL containers? [y/N]:${NC} "
+  read -r CONFIRM
+  
+  if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
+    echo -e "${YELLOW}Operation cancelled.${NC}"
+    return 0
+  fi
+  
+  echo ""
+  echo -e "${GREEN}Force stopping all containers...${NC}"
+  docker stop $ALL_CONTAINERS >/dev/null 2>&1 || true
+  
+  echo -e "${GREEN}Removing all containers...${NC}"
+  docker rm $ALL_CONTAINERS >/dev/null 2>&1 || true
+  
+  echo -e "${GREEN}All Claude Code containers have been force removed.${NC}"
+}
+
+# Handle special commands
+if [[ "$REMOVE_CONTAINERS" == "true" ]]; then
+  remove_stopped_containers
+  exit 0
+fi
+
+if [[ "$FORCE_REMOVE_ALL_CONTAINERS" == "true" ]]; then
+  force_remove_all_containers
+  exit 0
+fi
+
 if [[ "$BUILD_ONLY" == "true" ]]; then
   build_image
   echo -e "${GREEN}Build complete. Exiting.${NC}"
