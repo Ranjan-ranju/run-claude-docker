@@ -472,7 +472,11 @@ force_remove_all_containers() {
 generate_dockerfile_content() {
   cat <<'DOCKERFILE_EOF'
 # vim: set ft=dockerfile:
-FROM ubuntu:25.04
+
+# ============================================================================
+# Stage 1: Base tools and development environment
+# ============================================================================
+FROM ubuntu:25.04 AS base-tools
 
 # Install system dependencies including zsh and tools
 RUN apt-get update && apt-get install -y \
@@ -506,6 +510,7 @@ RUN ARCH=$(dpkg --print-architecture) && \
 ENV PATH=/usr/local/go/bin:$PATH
 ENV CGO_ENABLED=0
 
+# Create user
 ARG USERNAME
 RUN useradd -m -s /bin/zsh ${USERNAME:-claude} \
 	&& echo ${USERNAME:-claude} ALL=\(root\) NOPASSWD:ALL > /etc/sudoers.d/${USERNAME:-claude} \
@@ -518,6 +523,11 @@ RUN git config --global url."https://github.com/".insteadOf git@github.com: \
 	&& cd unsplash-mcp-server \
 	&& go build -o /usr/local/bin/unsplash-mcp-server ./cmd/server \
 	&& git config --global --unset url."https://github.com/".insteadOf
+
+# ============================================================================
+# Stage 2: User environment setup (zsh, fnm, node)
+# ============================================================================
+FROM base-tools AS user-env
 
 # Switch to user and setup zsh with oh-my-zsh
 USER $USERNAME
@@ -551,15 +561,20 @@ RUN echo 'export ZSH="$HOME/.oh-my-zsh"' >> ~/.zshrc \
 	&& echo 'alias vi="nvim"' >> ~/.zshrc \
 	&& echo 'export GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"' >> ~/.zshrc
 
-# Install Claude CLI
-RUN eval "$(fnm env)" && curl -fsSL https://claude.ai/install.sh | bash
-ENV PATH=/home/$USERNAME/.local/bin:$PATH
-
 # Install LazyVim
 RUN git clone https://github.com/LazyVim/starter ~/.config/nvim \
 	&& rm -rf ~/.config/nvim/.git
 
 RUN nvim --headless "+Lazy! sync" +qa
+
+# ============================================================================
+# Stage 3: Claude and MCP servers
+# ============================================================================
+FROM user-env AS claude-mcp
+
+# Install Claude CLI
+RUN eval "$(fnm env)" && curl -fsSL https://claude.ai/install.sh | bash
+ENV PATH=/home/$USERNAME/.local/bin:$PATH
 
 # Install Playwright MCP via npm
 RUN eval "$(fnm env)" && npm install -g @playwright/mcp@latest
@@ -578,16 +593,17 @@ RUN eval "$(fnm env)" && claude mcp add playwright \
 	--scope user \
 	npx @playwright/mcp@latest
 
+# ============================================================================
+# Stage 4: Final runtime image
+# ============================================================================
+FROM claude-mcp AS final
+
 # Create entrypoint script that handles workspace directory change (as root)
 USER root
 RUN cat > /entrypoint.sh << 'EOF'
 #!/bin/sh
-echo "WORKSPACE_PATH is: $WORKSPACE_PATH"
 if [ -n "$WORKSPACE_PATH" ] && [ -d "$WORKSPACE_PATH" ]; then
-  echo "Changing to $WORKSPACE_PATH"
   cd "$WORKSPACE_PATH"
-else
-  echo "Not changing directory - path not found or not set"
 fi
 exec "$@"
 EOF
