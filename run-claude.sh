@@ -384,30 +384,11 @@ if [[ -n "$UNSPLASH_ACCESS_KEY" ]]; then
   DOCKER_CMD="$DOCKER_CMD -e UNSPLASH_ACCESS_KEY=$UNSPLASH_ACCESS_KEY"
 fi
 
-# Forward Claude config to merge if it exists
+# Add conditional bind-mount for host Claude config if it exists
 if [[ -f "$HOME/.claude.json" ]]; then
-  # List of config keys to merge from host to container
-  CONFIG_KEYS=("oauthAccount" "hasSeenTasksHint" "userID" "hasCompletedOnboarding" "lastOnboardingVersion" "subscriptionNoticeCount" "hasAvailableSubscription" "s1mAccessCache")
-  
-  # Build jq expression to extract all desired keys
-  JQ_SELECTORS=""
-  for key in "${CONFIG_KEYS[@]}"; do
-    if [[ -n "$JQ_SELECTORS" ]]; then
-      JQ_SELECTORS="$JQ_SELECTORS, "
-    fi
-    JQ_SELECTORS="$JQ_SELECTORS\"$key\": .$key"
-  done
-  
-  # Extract config data and add bypass permissions
-  CLAUDE_CONFIG=$(jq -c "{$JQ_SELECTORS, \"bypassPermissionsModeAccepted\": true}" "$HOME/.claude.json" 2>/dev/null || echo "")
-  
-  if [[ -n "$CLAUDE_CONFIG" && "$CLAUDE_CONFIG" != "null" && "$CLAUDE_CONFIG" != '""' && "$CLAUDE_CONFIG" != "{}" ]]; then
-    # Base64 encode to avoid shell escaping issues
-    CLAUDE_CONFIG_B64=$(printf '%s' "$CLAUDE_CONFIG" | base64 | tr -d '\n')
-    if [[ "$VERBOSE" == "true" ]]; then
-      echo -e "${YELLOW}Claude config detected and will be merged in container${NC}"
-    fi
-    DOCKER_CMD="$DOCKER_CMD -e CLAUDE_CONFIG_MERGE_B64=$CLAUDE_CONFIG_B64"
+  DOCKER_CMD="$DOCKER_CMD -v $HOME/.claude.json:/home/$CURRENT_USER/.claude.host.json:ro"
+  if [[ "$VERBOSE" == "true" ]]; then
+    echo -e "${YELLOW}Host Claude config detected and will be mounted for merging${NC}"
   fi
 fi
 
@@ -698,25 +679,34 @@ USER root
 RUN cat > /entrypoint.sh << 'EOF'
 #!/bin/sh
 
-# Merge Claude config if provided
-if [ -n "$CLAUDE_CONFIG_MERGE_B64" ]; then
-  CLAUDE_JSON="$HOME/.claude.json"
+# Merge Claude config from host file if available
+if [ -f "$HOME/.claude.host.json" ]; then
+  CONFIG_KEYS="oauthAccount hasSeenTasksHint userID hasCompletedOnboarding lastOnboardingVersion subscriptionNoticeCount hasAvailableSubscription s1mAccessCache"
   
-  # Decode base64 config data
-  CLAUDE_CONFIG_DATA=$(echo "$CLAUDE_CONFIG_MERGE_B64" | tr -d '\n' | base64 -d)
+  # Build jq expression for extraction
+  JQ_EXPR=""
+  for key in $CONFIG_KEYS; do
+    if [ -n "$JQ_EXPR" ]; then JQ_EXPR="$JQ_EXPR, "; fi
+    JQ_EXPR="$JQ_EXPR\"$key\": .$key"
+  done
   
-  if [ -f "$CLAUDE_JSON" ]; then
-    # Merge with existing file
-    cat "$CLAUDE_JSON" | jq ". * $CLAUDE_CONFIG_DATA" > "$CLAUDE_JSON.tmp" && mv "$CLAUDE_JSON.tmp" "$CLAUDE_JSON"
+  # Extract config data and add bypass permissions
+  HOST_CONFIG=$(jq -c "{$JQ_EXPR, \"bypassPermissionsModeAccepted\": true}" "$HOME/.claude.host.json" 2>/dev/null || echo "")
+  
+  if [ -n "$HOST_CONFIG" ] && [ "$HOST_CONFIG" != "null" ] && [ "$HOST_CONFIG" != "{}" ]; then
+    if [ -f "$HOME/.claude.json" ]; then
+      # Merge with existing container file
+      jq ". * $HOST_CONFIG" "$HOME/.claude.json" > "$HOME/.claude.json.tmp" && mv "$HOME/.claude.json.tmp" "$HOME/.claude.json"
+    else
+      # Create new container file with host config
+      echo "$HOST_CONFIG" | jq . > "$HOME/.claude.json"
+    fi
+    echo "Claude config merged from host file"
   else
-    # Create new file with config data
-    echo "$CLAUDE_CONFIG_DATA" | jq . > "$CLAUDE_JSON"
+    echo "No valid config found in host file"
   fi
-  echo "Claude config merged into .claude.json"
-  
-  # Unset the environment variables for security
-  unset CLAUDE_CONFIG_MERGE_B64
-  unset CLAUDE_CONFIG_DATA
+else
+  echo "No host Claude config file mounted"
 fi
 
 # Change to workspace directory if provided
