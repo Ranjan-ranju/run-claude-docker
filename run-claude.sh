@@ -51,6 +51,7 @@ FORCE_REMOVE_ALL_CONTAINERS=false
 EXPORT_DOCKERFILE=""
 PUSH_TO_REPO=""
 ENABLE_GPG=true
+DRY_RUN=false
 EXTRA_PACKAGES=()
 PASSTHROUGH_ARGS=()
 
@@ -69,7 +70,26 @@ format_docker_command() {
 	local cmd="$1"
 	
 	# First normalize the command: remove existing backslashes and tabs, then add proper breaks
-	echo "$cmd" | tr -d '\\\n\t' | sed -E 's/ (-[a-z]|--[a-z-]+)/ \\\n  \1/g' | while IFS= read -r line; do
+	local normalized_cmd=$(echo "$cmd" | tr -d '\\\n\t' | sed 's/  */ /g')
+	
+	# Add line breaks before flags AND before image name, then process each line
+	# Use a more targeted approach to separate image:tag from any trailing arguments
+	local all_lines=$(echo "$normalized_cmd" | sed -E '
+		s/ (-[a-z]|--[a-z-]+)/ \\\n  \1/g
+		s/ ([a-z0-9-]+:[a-z0-9.-]+)/ \\\n\1/g
+	' | sed -E 's/^([a-z0-9-]+:[a-z0-9.-]+) (.+)$/\1\n\2/')
+	
+	local line_count=$(echo "$all_lines" | wc -l)
+	local current_line=0
+	
+	echo "$all_lines" | while IFS= read -r line; do
+		current_line=$((current_line + 1))
+		# Skip empty lines
+		[[ -z "$line" ]] && continue
+		
+		# Remove any trailing backslashes for cleaner output
+		line=$(echo "$line" | sed 's/ \\$//')
+		
 		# Color the first line (docker run command)
 		if [[ "$line" =~ ^docker\ run ]]; then
 			printf "${WHITE}%s${NC}\n" "$line"
@@ -107,9 +127,15 @@ format_docker_command() {
 			else
 				printf "${BLUE}%s${NC}\n" "$line"
 			fi
-		# Everything else (like image name at the end)
+		# Everything else (like image name and command arguments)
 		else
-			printf "%s\n" "$line"
+			# Add proper indentation for image name and arguments
+			# Don't add backslash to the very last line
+			if [[ $current_line -eq $line_count ]]; then
+				printf "  ${BRIGHT_CYAN}%s${NC}\n" "$line"
+			else
+				printf "  ${BRIGHT_CYAN}%s${NC} \\\\\n" "$line"
+			fi
 		fi
 	done
 }
@@ -244,6 +270,7 @@ usage() {
   echo "  --rebuild               Force rebuild the Docker image and continue"
   echo "  --recreate              Remove existing container and create new one"
   echo "  --verbose               Show detailed output including Docker commands"
+  echo "  --dry-run               Show what would be executed without actually running"
   echo "  --remove-containers     Remove stopped Claude Code containers and exit"
   echo "  --force-remove-all-containers"
   echo "                          Remove ALL Claude Code containers (including active ones) and exit"
@@ -369,6 +396,10 @@ while [[ $# -gt 0 ]]; do
     ;;
   --verbose)
     VERBOSE=true
+    shift
+    ;;
+  --dry-run)
+    DRY_RUN=true
     shift
     ;;
   --remove-containers)
@@ -607,15 +638,15 @@ if [[ "$ENABLE_GPG" == "true" && -d "$HOME/.gnupg" ]]; then
   fi
 fi
 
-# Add passthrough arguments if provided (before image name)
+# Add image name
+DOCKER_CMD="$DOCKER_CMD $IMAGE_NAME"
+
+# Add passthrough arguments if provided (after image name)
 if [[ ${#PASSTHROUGH_ARGS[@]} -gt 0 ]]; then
   for arg in "${PASSTHROUGH_ARGS[@]}"; do
     DOCKER_CMD="$DOCKER_CMD $arg"
   done
 fi
-
-# Add image name
-DOCKER_CMD="$DOCKER_CMD $IMAGE_NAME"
 
 # Add command if provided (only if no passthrough args, since passthrough includes the command)
 if [[ $# -gt 0 && ${#PASSTHROUGH_ARGS[@]} -eq 0 ]]; then
@@ -644,6 +675,12 @@ build_image() {
   generate_dockerfile_content >"$TEMP_DIR/Dockerfile"
 
   # Build the image
+  if [[ "$DRY_RUN" == "true" ]]; then
+    echo -e "${MAGENTA}Would execute: ${BRIGHT_CYAN}docker build --build-arg USERNAME=\"$USERNAME\" -t \"$IMAGE_NAME\" \"$TEMP_DIR\"${NC}"
+    echo -e "${GREEN}Dry run complete - would have built Docker image.${NC}"
+    return 0
+  fi
+  
   if docker build --build-arg USERNAME="$USERNAME" -t "$IMAGE_NAME" "$TEMP_DIR"; then
     echo -e "${MAGENTA}Successfully built ${BRIGHT_CYAN}$IMAGE_NAME${NC}"
   else
@@ -657,6 +694,14 @@ pull_remote_image() {
   local REMOTE_IMAGE="${CLAUDE_CODE_IMAGE_NAME:-icanhasjonas/claude-code}:latest"
 
   echo -e "${MAGENTA}Pulling remote image ${BRIGHT_CYAN}$REMOTE_IMAGE${MAGENTA}...${NC}"
+  
+  if [[ "$DRY_RUN" == "true" ]]; then
+    echo -e "${MAGENTA}Would execute: ${BRIGHT_CYAN}docker pull \"$REMOTE_IMAGE\"${NC}"
+    echo -e "${MAGENTA}Would execute: ${BRIGHT_CYAN}docker tag \"$REMOTE_IMAGE\" \"$IMAGE_NAME\"${NC}"
+    echo -e "${GREEN}Dry run complete - would have pulled and tagged remote image.${NC}"
+    return 0
+  fi
+  
   if docker pull "$REMOTE_IMAGE"; then
     echo -e "${MAGENTA}Successfully pulled ${BRIGHT_CYAN}$REMOTE_IMAGE${NC}"
     echo -e "${MAGENTA}Tagging as ${BRIGHT_CYAN}$IMAGE_NAME${MAGENTA}...${NC}"
@@ -1094,6 +1139,13 @@ push_to_repository() {
     pull_remote_image
   fi
 
+  if [[ "$DRY_RUN" == "true" ]]; then
+    echo -e "${MAGENTA}Would execute: ${BRIGHT_CYAN}docker tag \"$IMAGE_NAME\" \"$REPO\"${NC}"
+    echo -e "${MAGENTA}Would execute: ${BRIGHT_CYAN}docker push \"$REPO\"${NC}"
+    echo -e "${GREEN}Dry run complete - would have tagged and pushed image.${NC}"
+    return 0
+  fi
+
   # Tag the image for the target repository
   echo -e "${MAGENTA}Tagging image ${BRIGHT_CYAN}$IMAGE_NAME${MAGENTA} as ${BRIGHT_CYAN}$REPO${MAGENTA}...${NC}"
   if ! docker tag "$IMAGE_NAME" "$REPO"; then
@@ -1191,6 +1243,15 @@ handle_existing_container() {
       fi
       EXEC_CMD="$EXEC_CMD $CONTAINER_NAME /usr/local/bin/claude-exec"
       
+      if [[ "$DRY_RUN" == "true" ]]; then
+        echo -e "${MAGENTA}Would execute: ${BRIGHT_CYAN}$EXEC_CMD${NC}"
+        if [[ $# -gt 0 ]]; then
+          echo -e "${MAGENTA}With args: ${BRIGHT_CYAN}$*${NC}"
+        fi
+        echo -e "${GREEN}Dry run complete - would have executed docker exec.${NC}"
+        exit 0
+      fi
+      
       if [[ $# -gt 0 ]]; then
         exec $EXEC_CMD "$@"
       else
@@ -1198,6 +1259,26 @@ handle_existing_container() {
       fi
     else
       echo -e "${MAGENTA}Container ${BRIGHT_CYAN}$CONTAINER_NAME${MAGENTA} exists but is not running. Starting it...${NC}"
+      
+      if [[ "$DRY_RUN" == "true" ]]; then
+        if [[ $# -gt 0 ]]; then
+          echo -e "${MAGENTA}Would execute: ${BRIGHT_CYAN}docker start $CONTAINER_NAME${NC}"
+          EXEC_CMD="docker exec -it"
+          if [[ ${#PASSTHROUGH_ARGS[@]} -gt 0 ]]; then
+            for arg in "${PASSTHROUGH_ARGS[@]}"; do
+              EXEC_CMD="$EXEC_CMD $arg"
+            done
+          fi
+          EXEC_CMD="$EXEC_CMD $CONTAINER_NAME /usr/local/bin/claude-exec"
+          echo -e "${MAGENTA}Then execute: ${BRIGHT_CYAN}$EXEC_CMD${NC}"
+          echo -e "${MAGENTA}With args: ${BRIGHT_CYAN}$*${NC}"
+        else
+          echo -e "${MAGENTA}Would execute: ${BRIGHT_CYAN}docker start -i $CONTAINER_NAME${NC}"
+        fi
+        echo -e "${GREEN}Dry run complete - would have started and executed commands.${NC}"
+        exit 0
+      fi
+      
       if [[ $# -gt 0 ]]; then
         # Start container and then execute command in it
         docker start "$CONTAINER_NAME" >/dev/null
@@ -1251,6 +1332,11 @@ elif [[ "$REMOVE_CONTAINER" == "true" ]]; then
 fi
 
 # Execute the command (for new containers or when --rm is used)
+if [[ "$DRY_RUN" == "true" ]]; then
+  echo -e "${GREEN}Dry run complete - would have executed the above Docker command.${NC}"
+  exit 0
+fi
+
 if ! exec $DOCKER_CMD; then
   echo -e "${RED}Failed to run Docker container.${NC}"
   echo -e "${YELLOW}If this failed due to architecture issues (e.g., Apple Silicon/arm64), try:${NC}"
