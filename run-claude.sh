@@ -54,6 +54,7 @@ ENABLE_GPG=true
 DRY_RUN=false
 EXTRA_PACKAGES=()
 PASSTHROUGH_ARGS=()
+EXTRA_VOLUMES=()
 
 # List of environment variables to forward to the container
 FORWARDED_VARIABLES=(
@@ -184,7 +185,7 @@ _run_claude_completion() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
     
-    opts="-w --workspace -c --claude-config -n --name -i --image --rm --no-interactive --no-privileged --safe --no-gpg --gpg --build --rebuild --recreate --verbose --remove-containers --force-remove-all-containers --export-dockerfile --push-to --generate-completions --username --extra-package -E --forward-variable -h --help"
+    opts="-w --workspace -c --claude-config -n --name -i --image --rm --no-interactive --no-privileged --safe --no-gpg --gpg --build --rebuild --recreate --verbose --remove-containers --force-remove-all-containers --export-dockerfile --push-to --generate-completions --username --extra-package -E --forward-variable --aws -h --help"
     
     case "${prev}" in
         -w|--workspace)
@@ -269,6 +270,7 @@ _run_claude_zsh_completion() {
         '--extra-package[Add extra Ubuntu package]:package:(curl wget tmux htop nano emacs)'
         '-E[Forward environment variable]:variable:(AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY GITHUB_TOKEN)'
         '--forward-variable[Forward environment variable]:variable:(AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY GITHUB_TOKEN)'
+        '--aws[Enable AWS integration: forward AWS vars and mount ~/.aws]'
         '(-h --help)'{-h,--help}'[Show help]'
     )
     _arguments -s -S $options
@@ -317,6 +319,8 @@ usage() {
   echo "  -E, --forward-variable VAR"
   echo "                          Forward additional environment variable to container (can be used multiple times)"
   echo "                          Use -E !VAR to exclude a variable from the default forwarded list"
+  echo "  --aws                   Enable AWS integration: forward common AWS environment variables"
+  echo "                          and mount ~/.aws directory to container (readonly)"
   echo "  --                      Pass remaining arguments directly to docker run/exec"
   echo "  -h, --help              Show this help"
   echo ""
@@ -494,6 +498,18 @@ while [[ $# -gt 0 ]]; do
       FORWARDED_VARIABLES+=("$var")
     fi
     shift 2
+    ;;
+  --aws)
+    # Add default AWS environment variables
+    AWS_VARS=("AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" "AWS_SESSION_TOKEN" "AWS_REGION" "AWS_DEFAULT_REGION" "AWS_PROFILE" "AWS_ROLE_ARN" "AWS_WEB_IDENTITY_TOKEN_FILE" "AWS_ROLE_SESSION_NAME")
+    for aws_var in "${AWS_VARS[@]}"; do
+      FORWARDED_VARIABLES+=("$aws_var")
+    done
+    # Mount ~/.aws directory if it exists
+    if [[ -d "$HOME/.aws" ]]; then
+      EXTRA_VOLUMES+=(-v "$HOME/.aws:/home/$USERNAME/.aws:ro")
+    fi
+    shift
     ;;
   -h | --help)
     usage
@@ -698,6 +714,13 @@ if [[ "$ENABLE_GPG" == "true" && -d "$HOME/.gnupg" ]]; then
   if [[ "$VERBOSE" == "true" ]]; then
     echo -e "${MAGENTA}GPG directory detected and will be mounted to container${NC}"
   fi
+fi
+
+# Add extra volumes if any were specified
+if [[ ${#EXTRA_VOLUMES[@]} -gt 0 ]]; then
+  for volume in "${EXTRA_VOLUMES[@]}"; do
+    DOCKER_CMD="$DOCKER_CMD $volume"
+  done
 fi
 
 # Add image name

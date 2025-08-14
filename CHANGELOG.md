@@ -5,6 +5,35 @@ All notable changes to the run-claude Docker wrapper script will be documented i
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Enhanced Environment Variable Management**:
+  - `-E` / `--forward-variable` flags for dynamic environment variable forwarding
+  - Support for variable exclusion using `-E !VAR` syntax  
+  - `RUN_CLAUDE_EXTRA_VARIABLES` environment variable for batch variable forwarding
+  - Centralized `FORWARDED_VARIABLES` array with duplicate detection
+  - `--aws` shortcut flag for automatic AWS integration
+- **AWS Integration**:
+  - One-command AWS setup with `--aws` flag
+  - Automatic forwarding of standard AWS environment variables (ACCESS_KEY_ID, SECRET_ACCESS_KEY, SESSION_TOKEN, REGION, DEFAULT_REGION, PROFILE, ROLE_ARN, WEB_IDENTITY_TOKEN_FILE, ROLE_SESSION_NAME)
+  - Read-only mounting of `~/.aws` directory to container
+  - Shell completion support for AWS variables
+- **Improved CLI Experience**:
+  - Enhanced `--dry-run` mode with formatted Docker command preview
+  - Better verbose output with multiline command formatting and ANSI colors
+  - Comprehensive shell completions for new flags and variables
+
+### Changed
+- **Refactored Environment Variable System**: Unified approach using single `FORWARDED_VARIABLES` array instead of multiple separate arrays
+- **Enhanced Docker Command Construction**: Improved formatting with proper line continuation and color coding
+- **Better Bash Compatibility**: Fixed associative array usage for macOS default bash 3.2
+
+### Fixed
+- Bash 3.2 compatibility issues with associative arrays on macOS
+- Docker command argument ordering for proper verbose output display
+- Variable scope issues in global context environment variable processing
+
 ## [1.0.0] - 2025-08-15
 
 ### Added
