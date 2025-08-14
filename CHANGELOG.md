@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `RUN_CLAUDE_NO_GPG` environment variable support  
   - Integration with `--safe` mode
   - Local-only Docker builds (removed automatic external pulls)
+- **Development Tools**:
+  - git-delta package for enhanced git diff output with syntax highlighting
 - **Improved User Experience**:
   - Verbose mode forwarding to containers (`RUN_CLAUDE_VERBOSE=1`)
   - Enhanced ANSI color coding (dark magenta for text, bright cyan for variables)

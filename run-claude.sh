@@ -657,6 +657,7 @@ RUN apt-get update && apt-get install -y \
 	ripgrep \
 	fd-find \
 	gpg \
+	git-delta \
 	&& rm -rf /var/lib/apt/lists/*
 
 # Install Go
