@@ -48,6 +48,7 @@ REMOVE_CONTAINERS=false
 FORCE_REMOVE_ALL_CONTAINERS=false
 EXPORT_DOCKERFILE=""
 PUSH_TO_REPO=""
+ENABLE_GPG=true
 
 # Colors for output
 RED='\033[0;31m'
@@ -75,7 +76,7 @@ _run_claude_completion() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
     
-    opts="-w --workspace -c --claude-config -n --name -i --image --rm --no-interactive --no-privileged --safe --build --rebuild --recreate --verbose --remove-containers --force-remove-all-containers --export-dockerfile --push-to --generate-completions -h --help"
+    opts="-w --workspace -c --claude-config -n --name -i --image --rm --no-interactive --no-privileged --safe --no-gpg --gpg --build --rebuild --recreate --verbose --remove-containers --force-remove-all-containers --export-dockerfile --push-to --generate-completions -h --help"
     
     case "${prev}" in
         -w|--workspace)
@@ -133,6 +134,8 @@ _run_claude_zsh_completion() {
         '--no-interactive[Run in non-interactive mode]'
         '--no-privileged[Run without privileged mode]'
         '--safe[Disable dangerous permissions]'
+        '--no-gpg[Disable GPG agent forwarding]'
+        '--gpg[Enable GPG agent forwarding]'
         '--build[Build the Docker image and exit]'
         '--rebuild[Force rebuild the Docker image and continue]'
         '--recreate[Remove existing container and create new one]'
@@ -168,6 +171,8 @@ usage() {
   echo "  --no-interactive        Run in non-interactive mode"
   echo "  --no-privileged         Run without privileged mode"
   echo "  --safe                  Disable dangerous permissions"
+  echo "  --no-gpg                Disable GPG agent forwarding"
+  echo "  --gpg                   Enable GPG agent forwarding (overrides RUN_CLAUDE_NO_GPG)"
   echo "  --build                 Build the Docker image and exit"
   echo "  --pull                  Pull latest image from registry"
   echo "  --rebuild               Force rebuild the Docker image and continue"
@@ -253,6 +258,15 @@ while [[ $# -gt 0 ]]; do
     ;;
   --safe)
     DANGEROUS_MODE=false
+    ENABLE_GPG=false
+    shift
+    ;;
+  --no-gpg)
+    ENABLE_GPG=false
+    shift
+    ;;
+  --gpg)
+    ENABLE_GPG=true
     shift
     ;;
   --build)
@@ -305,6 +319,11 @@ while [[ $# -gt 0 ]]; do
     ;;
   esac
 done
+
+# Handle GPG environment variable override
+if [[ "$RUN_CLAUDE_NO_GPG" == "1" && "$ENABLE_GPG" == "true" ]]; then
+  ENABLE_GPG=false
+fi
 
 # Validate conflicting options
 if [[ "$FORCE_PULL" == "true" && "$BUILD_ONLY" == "true" ]]; then
@@ -371,6 +390,11 @@ if [[ "$DANGEROUS_MODE" == "true" ]]; then
   DOCKER_CMD="$DOCKER_CMD -e ANTHROPIC_DANGEROUS_MODE=1"
 fi
 
+# Forward verbose mode to container
+if [[ "$VERBOSE" == "true" ]]; then
+  DOCKER_CMD="$DOCKER_CMD -e RUN_CLAUDE_VERBOSE=1"
+fi
+
 # Forward API keys and secrets if they exist
 if [[ -n "$OPENAI_API_KEY" ]]; then
   DOCKER_CMD="$DOCKER_CMD -e OPENAI_API_KEY=$OPENAI_API_KEY"
@@ -412,6 +436,25 @@ if [[ -n "$SSH_AUTH_SOCK" && -S "$SSH_AUTH_SOCK" ]]; then
   DOCKER_CMD="$DOCKER_CMD -e SSH_AUTH_SOCK=/ssh-agent"
   if [[ "$VERBOSE" == "true" ]]; then
     echo -e "${YELLOW}SSH agent socket detected and will be forwarded to container${NC}"
+  fi
+fi
+
+# Forward GPG directory and agent if available
+if [[ "$ENABLE_GPG" == "true" && -d "$HOME/.gnupg" ]]; then
+  # Mount GPG directory (read-write for agent communication)
+  DOCKER_CMD="$DOCKER_CMD -v $HOME/.gnupg:/home/$CURRENT_USER/.gnupg"
+  
+  # Forward GPG agent extra socket if available
+  GPG_EXTRA_SOCKET=$(gpgconf --list-dirs agent-extra-socket 2>/dev/null)
+  if [[ -S "$GPG_EXTRA_SOCKET" ]]; then
+    DOCKER_CMD="$DOCKER_CMD -v $GPG_EXTRA_SOCKET:/gpg-agent-extra"
+    if [[ "$VERBOSE" == "true" ]]; then
+      echo -e "${YELLOW}GPG agent socket detected and will be forwarded to container${NC}"
+    fi
+  fi
+  
+  if [[ "$VERBOSE" == "true" ]]; then
+    echo -e "${YELLOW}GPG directory detected and will be mounted to container${NC}"
   fi
 fi
 
@@ -601,6 +644,7 @@ RUN apt-get update && apt-get install -y \
 	tree \
 	ripgrep \
 	fd-find \
+	gpg \
 	&& rm -rf /var/lib/apt/lists/*
 
 # Install Go
@@ -711,12 +755,44 @@ if [ -f "$HOME/.claude.host.json" ]; then
       # Create new container file with host config
       echo "$HOST_CONFIG" | jq . > "$HOME/.claude.json"
     fi
-    echo "Claude config merged from host file"
+    if [ "$RUN_CLAUDE_VERBOSE" = "1" ]; then
+      echo "Claude config merged from host file"
+    fi
   else
-    echo "No valid config found in host file"
+    if [ "$RUN_CLAUDE_VERBOSE" = "1" ]; then
+      echo "No valid config found in host file"
+    fi
   fi
 else
-  echo "No host Claude config file mounted"
+  if [ "$RUN_CLAUDE_VERBOSE" = "1" ]; then
+    echo "No host Claude config file mounted"
+  fi
+fi
+
+# Link GPG agent socket if forwarded
+if [ -S "/gpg-agent-extra" ]; then
+  # Detect expected socket location dynamically
+  EXPECTED_SOCKET=$(gpgconf --list-dirs agent-socket 2>/dev/null)
+  
+  if [ -n "$EXPECTED_SOCKET" ]; then
+    # Create directory structure for expected socket location
+    mkdir -p "$(dirname "$EXPECTED_SOCKET")"
+    chmod 700 "$(dirname "$EXPECTED_SOCKET")"
+    
+    # Link forwarded socket to expected location
+    ln -sf /gpg-agent-extra "$EXPECTED_SOCKET"
+    if [ "$RUN_CLAUDE_VERBOSE" = "1" ]; then
+      echo "GPG agent socket linked at $EXPECTED_SOCKET"
+    fi
+  else
+    # Fallback to traditional ~/.gnupg location
+    mkdir -p ~/.gnupg
+    chmod 700 ~/.gnupg
+    ln -sf /gpg-agent-extra ~/.gnupg/S.gpg-agent
+    if [ "$RUN_CLAUDE_VERBOSE" = "1" ]; then
+      echo "GPG agent socket linked at ~/.gnupg/S.gpg-agent (fallback)"
+    fi
+  fi
 fi
 
 # Change to workspace directory if provided
