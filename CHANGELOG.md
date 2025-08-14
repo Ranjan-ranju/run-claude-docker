@@ -30,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Enhanced ANSI color coding (dark magenta for text, bright cyan for variables)
   - Container labeling system for better tracking and management
   - Professional shell completions for bash and zsh
+  - `claude-exec` wrapper script for proper workspace and environment setup in `docker exec`
+  - Unknown argument validation with helpful error messages and automatic help display
+  - `--` passthrough support for direct Docker argument forwarding
 
 ### Changed
 - **BREAKING**: Removed automatic docker pull from external registries - users must build locally

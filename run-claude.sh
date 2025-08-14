@@ -52,6 +52,7 @@ EXPORT_DOCKERFILE=""
 PUSH_TO_REPO=""
 ENABLE_GPG=true
 EXTRA_PACKAGES=()
+PASSTHROUGH_ARGS=()
 
 # Colors for output
 RED='\033[0;31m'
@@ -202,6 +203,7 @@ usage() {
   echo "  --username NAME         Set container username (default: current user)"
   echo "  --extra-package PACKAGE Add extra Ubuntu package to container (can be used multiple times)"
   echo "                          Only works with --build, --rebuild, or --export-dockerfile"
+  echo "  --                      Pass remaining arguments directly to docker run/exec"
   echo "  -h, --help              Show this help"
   echo ""
   echo "EXAMPLES:"
@@ -231,6 +233,9 @@ usage() {
   echo ""
   echo "  # Use environment variable for extra packages"
   echo "  RUN_CLAUDE_EXTRA_PACKAGES=\"tmux curl\" $0 --extra-package gpg --build"
+  echo ""
+  echo "  # Pass Docker arguments directly"
+  echo "  $0 -- --env MY_VAR=value --volume /host:/container"
   echo ""
   echo "  # Install shell completions"
   echo "  # For bash:"
@@ -345,6 +350,26 @@ while [[ $# -gt 0 ]]; do
   -h | --help)
     usage
     exit 0
+    ;;
+  --)
+    # Everything after -- is passed to docker
+    shift
+    PASSTHROUGH_ARGS=("$@")
+    break
+    ;;
+  --*)
+    # Unknown long option
+    echo -e "${RED}Error: Unknown option '$1'${NC}"
+    echo ""
+    usage
+    exit 1
+    ;;
+  -*)
+    # Unknown short option
+    echo -e "${RED}Error: Unknown option '$1'${NC}"
+    echo ""
+    usage
+    exit 1
     ;;
   *)
     # Remaining arguments are the command to run
@@ -510,11 +535,18 @@ if [[ "$ENABLE_GPG" == "true" && -d "$HOME/.gnupg" ]]; then
   fi
 fi
 
+# Add passthrough arguments if provided (before image name)
+if [[ ${#PASSTHROUGH_ARGS[@]} -gt 0 ]]; then
+  for arg in "${PASSTHROUGH_ARGS[@]}"; do
+    DOCKER_CMD="$DOCKER_CMD $arg"
+  done
+fi
+
 # Add image name
 DOCKER_CMD="$DOCKER_CMD $IMAGE_NAME"
 
-# Add command if provided
-if [[ $# -gt 0 ]]; then
+# Add command if provided (only if no passthrough args, since passthrough includes the command)
+if [[ $# -gt 0 && ${#PASSTHROUGH_ARGS[@]} -eq 0 ]]; then
   DOCKER_CMD="$DOCKER_CMD $*"
 fi
 
@@ -888,6 +920,30 @@ exec "$@"
 EOF
 RUN chmod +x /entrypoint.sh
 
+# Create claude-exec wrapper script for proper environment setup in docker exec
+RUN cat > /usr/local/bin/claude-exec << 'EOF'
+#!/bin/zsh
+
+# Change to workspace directory if available, fallback to home
+if [[ -n "$WORKSPACE_PATH" && -d "$WORKSPACE_PATH" ]]; then
+	cd "$WORKSPACE_PATH"
+else
+	cd ~
+fi
+
+# Execute the requested command or start interactive zsh
+if [[ $# -gt 0 ]]; then
+	# Source zsh environment files for command execution
+	[[ -f ~/.zshenv ]] && source ~/.zshenv
+	[[ -f ~/.zshrc ]] && source ~/.zshrc
+	exec "$@"
+else
+	# Let zsh handle its own sourcing for interactive shells
+	exec /bin/zsh
+fi
+EOF
+RUN chmod +x /usr/local/bin/claude-exec
+
 # Set working directory for user sessions
 USER $USERNAME
 WORKDIR /home/$USERNAME
@@ -1053,17 +1109,34 @@ handle_existing_container() {
     # Check if container is running
     if docker ps --format "table {{.Names}}" | grep -q "^${CONTAINER_NAME}$"; then
       echo -e "${MAGENTA}Container ${BRIGHT_CYAN}$CONTAINER_NAME${MAGENTA} is already running. Executing command in existing container...${NC}"
+      # Build docker exec command with passthrough args
+      EXEC_CMD="docker exec -it"
+      if [[ ${#PASSTHROUGH_ARGS[@]} -gt 0 ]]; then
+        for arg in "${PASSTHROUGH_ARGS[@]}"; do
+          EXEC_CMD="$EXEC_CMD $arg"
+        done
+      fi
+      EXEC_CMD="$EXEC_CMD $CONTAINER_NAME /usr/local/bin/claude-exec"
+      
       if [[ $# -gt 0 ]]; then
-        exec docker exec -it "$CONTAINER_NAME" "$@"
+        exec $EXEC_CMD "$@"
       else
-        exec docker exec -it "$CONTAINER_NAME" /bin/zsh
+        exec $EXEC_CMD
       fi
     else
       echo -e "${MAGENTA}Container ${BRIGHT_CYAN}$CONTAINER_NAME${MAGENTA} exists but is not running. Starting it...${NC}"
       if [[ $# -gt 0 ]]; then
         # Start container and then execute command in it
         docker start "$CONTAINER_NAME" >/dev/null
-        exec docker exec -it "$CONTAINER_NAME" "$@"
+        # Build docker exec command with passthrough args
+        EXEC_CMD="docker exec -it"
+        if [[ ${#PASSTHROUGH_ARGS[@]} -gt 0 ]]; then
+          for arg in "${PASSTHROUGH_ARGS[@]}"; do
+            EXEC_CMD="$EXEC_CMD $arg"
+          done
+        fi
+        EXEC_CMD="$EXEC_CMD $CONTAINER_NAME /usr/local/bin/claude-exec"
+        exec $EXEC_CMD "$@"
       else
         # Start container interactively
         exec docker start -i "$CONTAINER_NAME"
