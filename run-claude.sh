@@ -24,6 +24,39 @@
 
 set -e
 
+# Check for required tools
+check_required_tools() {
+  local missing_tools=()
+  local required_tools=(
+    "docker"
+    "jq"
+    "sha256sum"
+    "whoami"
+    "awk"
+    "sed"
+    "cut"
+    "wc"
+    "grep"
+    "git"
+  )
+
+  for tool in "${required_tools[@]}"; do
+    if ! command -v "$tool" &>/dev/null; then
+      missing_tools+=("$tool")
+    fi
+  done
+
+  if [[ ${#missing_tools[@]} -gt 0 ]]; then
+    echo -e "${RED}Error: The following required tools are missing:${NC}" >&2
+    for tool in "${missing_tools[@]}"; do
+      echo -e "  - ${YELLOW}$tool${NC}" >&2
+    done
+    echo >&2
+    echo -e "${YELLOW}Please install the missing tools and try again.${NC}" >&2
+    exit 1
+  fi
+}
+
 # Version and default values
 VERSION="1.0.0"
 USERNAME="$(whoami)"
@@ -58,12 +91,12 @@ EXTRA_VOLUMES=()
 
 # List of environment variables to forward to the container
 FORWARDED_VARIABLES=(
-	"ANTHROPIC_API_KEY"
-	"OPENAI_API_KEY"
-	"NUGET_API_KEY"
-	"UNSPLASH_ACCESS_KEY"
-	"ANTHROPIC_MODEL"
-	"TERM"
+  "ANTHROPIC_API_KEY"
+  "OPENAI_API_KEY"
+  "NUGET_API_KEY"
+  "UNSPLASH_ACCESS_KEY"
+  "ANTHROPIC_MODEL"
+  "TERM"
 )
 
 # Colors for output
@@ -76,95 +109,98 @@ BLUE='\033[0;34m'
 WHITE='\033[1;37m'
 NC='\033[0m' # No Color
 
+# Check for required tools before proceeding
+check_required_tools
+
 # Generate -e flags for forwarded environment variables
 generate_forwarded_variables() {
-	local env_flags=""
-	local seen_vars=""
-	
-	# Process all forwarded variables (avoiding duplicates)
-	for var in "${FORWARDED_VARIABLES[@]}"; do
-		if [[ -n "${!var}" && "$seen_vars" != *"|$var|"* ]]; then
-			env_flags="$env_flags -e $var=${!var}"
-			seen_vars="$seen_vars|$var|"
-		fi
-	done
-	
-	echo "$env_flags"
+  local env_flags=""
+  local seen_vars=""
+
+  # Process all forwarded variables (avoiding duplicates)
+  for var in "${FORWARDED_VARIABLES[@]}"; do
+    if [[ -n "${!var}" && "$seen_vars" != *"|$var|"* ]]; then
+      env_flags="$env_flags -e $var=${!var}"
+      seen_vars="$seen_vars|$var|"
+    fi
+  done
+
+  echo "$env_flags"
 }
 
 # Format Docker command for pretty verbose output
 format_docker_command() {
-	local cmd="$1"
-	
-	# First normalize the command: remove existing backslashes and tabs, then add proper breaks
-	local normalized_cmd=$(echo "$cmd" | tr -d '\\\n\t' | sed 's/  */ /g')
-	
-	# Add line breaks before flags AND before image name, then process each line
-	# Use a more targeted approach to separate image:tag from any trailing arguments
-	local all_lines=$(echo "$normalized_cmd" | sed -E '
+  local cmd="$1"
+
+  # First normalize the command: remove existing backslashes and tabs, then add proper breaks
+  local normalized_cmd=$(echo "$cmd" | tr -d '\\\n\t' | sed 's/  */ /g')
+
+  # Add line breaks before flags AND before image name, then process each line
+  # Use a more targeted approach to separate image:tag from any trailing arguments
+  local all_lines=$(echo "$normalized_cmd" | sed -E '
 		s/ (-[a-z]|--[a-z-]+)/ \\\n  \1/g
 		s/ ([a-z0-9-]+:[a-z0-9.-]+)/ \\\n\1/g
 	' | sed -E 's/^([a-z0-9-]+:[a-z0-9.-]+) (.+)$/\1\n\2/')
-	
-	local line_count=$(echo "$all_lines" | wc -l)
-	local current_line=0
-	
-	echo "$all_lines" | while IFS= read -r line; do
-		current_line=$((current_line + 1))
-		# Skip empty lines
-		[[ -z "$line" ]] && continue
-		
-		# Remove any trailing backslashes for cleaner output
-		line=$(echo "$line" | sed 's/ \\$//')
-		
-		# Color the first line (docker run command)
-		if [[ "$line" =~ ^docker\ run ]]; then
-			printf "${WHITE}%s${NC}\n" "$line"
-		# Color environment and volume flags specially
-		elif [[ "$line" =~ ^[[:space:]]*(-[ev])[[:space:]]+(.+)$ ]]; then
-			flag="${BASH_REMATCH[1]}"
-			value="${BASH_REMATCH[2]}"
-			
-			# Special handling for -v flags to colorize name:value parts
-			if [[ "$flag" == "-v" && "$value" =~ ^([^:]+):(.+)$ ]]; then
-				name="${BASH_REMATCH[1]}"
-				dest="${BASH_REMATCH[2]}"
-				printf "    ${YELLOW}%s${NC} ${MAGENTA}%s${NC}:${BRIGHT_CYAN}%s${NC}\n" "$flag" "$name" "$dest"
-			# Special handling for -e flags to colorize name=value parts
-			elif [[ "$flag" == "-e" && "$value" =~ ^([^=]+)=(.+)$ ]]; then
-				name="${BASH_REMATCH[1]}"
-				val="${BASH_REMATCH[2]}"
-				printf "    ${YELLOW}%s${NC} ${MAGENTA}%s${NC}=${BRIGHT_CYAN}%s${NC}\n" "$flag" "$name" "$val"
-			else
-				printf "    ${YELLOW}%s${NC} ${BRIGHT_CYAN}%s${NC}\n" "$flag" "$value"
-			fi
-		# Color other flags with special handling for --label and --name
-		elif [[ "$line" =~ ^[[:space:]]*(-[a-z]|--[a-z-]+) ]]; then
-			# Special handling for --label flags to colorize name=value parts
-			if [[ "$line" =~ ^([[:space:]]*--label[[:space:]]+)([^=]+)=(.+)$ ]]; then
-				flag_part="${BASH_REMATCH[1]}"
-				name="${BASH_REMATCH[2]}"
-				value="${BASH_REMATCH[3]}"
-				printf "${BLUE}%s${MAGENTA}%s${NC}=${BRIGHT_CYAN}%s${NC}\n" "$flag_part" "$name" "$value"
-			# Special handling for --name flags to colorize the name value
-			elif [[ "$line" =~ ^([[:space:]]*--name[[:space:]]+)(.+)$ ]]; then
-				flag_part="${BASH_REMATCH[1]}"
-				name_value="${BASH_REMATCH[2]}"
-				printf "${BLUE}%s${BRIGHT_CYAN}%s${NC}\n" "$flag_part" "$name_value"
-			else
-				printf "${BLUE}%s${NC}\n" "$line"
-			fi
-		# Everything else (like image name and command arguments)
-		else
-			# Add proper indentation for image name and arguments
-			# Don't add backslash to the very last line
-			if [[ $current_line -eq $line_count ]]; then
-				printf "  ${BRIGHT_CYAN}%s${NC}\n" "$line"
-			else
-				printf "  ${BRIGHT_CYAN}%s${NC} \\\\\n" "$line"
-			fi
-		fi
-	done
+
+  local line_count=$(echo "$all_lines" | wc -l)
+  local current_line=0
+
+  echo "$all_lines" | while IFS= read -r line; do
+    current_line=$((current_line + 1))
+    # Skip empty lines
+    [[ -z "$line" ]] && continue
+
+    # Remove any trailing backslashes for cleaner output
+    line=$(echo "$line" | sed 's/ \\$//')
+
+    # Color the first line (docker run command)
+    if [[ "$line" =~ ^docker\ run ]]; then
+      printf "${WHITE}%s${NC}\n" "$line"
+    # Color environment and volume flags specially
+    elif [[ "$line" =~ ^[[:space:]]*(-[ev])[[:space:]]+(.+)$ ]]; then
+      flag="${BASH_REMATCH[1]}"
+      value="${BASH_REMATCH[2]}"
+
+      # Special handling for -v flags to colorize name:value parts
+      if [[ "$flag" == "-v" && "$value" =~ ^([^:]+):(.+)$ ]]; then
+        name="${BASH_REMATCH[1]}"
+        dest="${BASH_REMATCH[2]}"
+        printf "    ${YELLOW}%s${NC} ${MAGENTA}%s${NC}:${BRIGHT_CYAN}%s${NC}\n" "$flag" "$name" "$dest"
+      # Special handling for -e flags to colorize name=value parts
+      elif [[ "$flag" == "-e" && "$value" =~ ^([^=]+)=(.+)$ ]]; then
+        name="${BASH_REMATCH[1]}"
+        val="${BASH_REMATCH[2]}"
+        printf "    ${YELLOW}%s${NC} ${MAGENTA}%s${NC}=${BRIGHT_CYAN}%s${NC}\n" "$flag" "$name" "$val"
+      else
+        printf "    ${YELLOW}%s${NC} ${BRIGHT_CYAN}%s${NC}\n" "$flag" "$value"
+      fi
+    # Color other flags with special handling for --label and --name
+    elif [[ "$line" =~ ^[[:space:]]*(-[a-z]|--[a-z-]+) ]]; then
+      # Special handling for --label flags to colorize name=value parts
+      if [[ "$line" =~ ^([[:space:]]*--label[[:space:]]+)([^=]+)=(.+)$ ]]; then
+        flag_part="${BASH_REMATCH[1]}"
+        name="${BASH_REMATCH[2]}"
+        value="${BASH_REMATCH[3]}"
+        printf "${BLUE}%s${MAGENTA}%s${NC}=${BRIGHT_CYAN}%s${NC}\n" "$flag_part" "$name" "$value"
+      # Special handling for --name flags to colorize the name value
+      elif [[ "$line" =~ ^([[:space:]]*--name[[:space:]]+)(.+)$ ]]; then
+        flag_part="${BASH_REMATCH[1]}"
+        name_value="${BASH_REMATCH[2]}"
+        printf "${BLUE}%s${BRIGHT_CYAN}%s${NC}\n" "$flag_part" "$name_value"
+      else
+        printf "${BLUE}%s${NC}\n" "$line"
+      fi
+    # Everything else (like image name and command arguments)
+    else
+      # Add proper indentation for image name and arguments
+      # Don't add backslash to the very last line
+      if [[ $current_line -eq $line_count ]]; then
+        printf "  ${BRIGHT_CYAN}%s${NC}\n" "$line"
+      else
+        printf "  ${BRIGHT_CYAN}%s${NC} \\\\\n" "$line"
+      fi
+    fi
+  done
 }
 
 # Generate shell completions
@@ -550,14 +586,14 @@ fi
 # Handle extra packages from environment variable
 if [[ -n "$RUN_CLAUDE_EXTRA_PACKAGES" ]]; then
   # Convert space-separated string to array and append to EXTRA_PACKAGES
-  IFS=' ' read -ra ENV_PACKAGES <<< "$RUN_CLAUDE_EXTRA_PACKAGES"
+  IFS=' ' read -ra ENV_PACKAGES <<<"$RUN_CLAUDE_EXTRA_PACKAGES"
   EXTRA_PACKAGES+=("${ENV_PACKAGES[@]}")
 fi
 
 # Handle extra variables from environment variable
 if [[ -n "$RUN_CLAUDE_EXTRA_VARIABLES" ]]; then
   # Convert space-separated string to array and process each variable
-  IFS=' ' read -ra ENV_VARIABLES <<< "$RUN_CLAUDE_EXTRA_VARIABLES"
+  IFS=' ' read -ra ENV_VARIABLES <<<"$RUN_CLAUDE_EXTRA_VARIABLES"
   for var in "${ENV_VARIABLES[@]}"; do
     if [[ "$var" =~ ^!(.+)$ ]]; then
       # Remove variable from forwarded list
@@ -765,7 +801,7 @@ build_image() {
     echo -e "${GREEN}Dry run complete - would have built Docker image.${NC}"
     return 0
   fi
-  
+
   if docker build --build-arg USERNAME="$USERNAME" -t "$IMAGE_NAME" "$TEMP_DIR"; then
     echo -e "${MAGENTA}Successfully built ${BRIGHT_CYAN}$IMAGE_NAME${NC}"
   else
@@ -779,14 +815,14 @@ pull_remote_image() {
   local REMOTE_IMAGE="${CLAUDE_CODE_IMAGE_NAME:-icanhasjonas/claude-code}:latest"
 
   echo -e "${MAGENTA}Pulling remote image ${BRIGHT_CYAN}$REMOTE_IMAGE${MAGENTA}...${NC}"
-  
+
   if [[ "$DRY_RUN" == "true" ]]; then
     echo -e "${MAGENTA}Would execute: ${BRIGHT_CYAN}docker pull \"$REMOTE_IMAGE\"${NC}"
     echo -e "${MAGENTA}Would execute: ${BRIGHT_CYAN}docker tag \"$REMOTE_IMAGE\" \"$IMAGE_NAME\"${NC}"
     echo -e "${GREEN}Dry run complete - would have pulled and tagged remote image.${NC}"
     return 0
   fi
-  
+
   if docker pull "$REMOTE_IMAGE"; then
     echo -e "${MAGENTA}Successfully pulled ${BRIGHT_CYAN}$REMOTE_IMAGE${NC}"
     echo -e "${MAGENTA}Tagging as ${BRIGHT_CYAN}$IMAGE_NAME${MAGENTA}...${NC}"
@@ -936,8 +972,8 @@ generate_dockerfile_content() {
 
   # Generate the package installation lines
   local package_lines=""
-  for ((i=0; i<${#all_packages[@]}; i++)); do
-    if [[ $i -eq $((${#all_packages[@]}-1)) ]]; then
+  for ((i = 0; i < ${#all_packages[@]}; i++)); do
+    if [[ $i -eq $((${#all_packages[@]} - 1)) ]]; then
       # Last package, no backslash since we're ending the RUN instruction
       package_lines+=$'\t'"${all_packages[i]}"
     else
@@ -960,7 +996,7 @@ DOCKERFILE_EOF
 
   # Insert the dynamic package list
   echo -e "$package_lines"
-  
+
   cat <<'DOCKERFILE_EOF'
 
 # Clean up apt cache
@@ -1326,15 +1362,15 @@ handle_existing_container() {
           EXEC_CMD="$EXEC_CMD $arg"
         done
       fi
-      
+
       # Add forwarded environment variables
       FORWARDED_ENV_FLAGS=$(generate_forwarded_variables)
       if [[ -n "$FORWARDED_ENV_FLAGS" ]]; then
         EXEC_CMD="$EXEC_CMD$FORWARDED_ENV_FLAGS"
       fi
-      
+
       EXEC_CMD="$EXEC_CMD $CONTAINER_NAME /usr/local/bin/claude-exec"
-      
+
       if [[ "$DRY_RUN" == "true" ]]; then
         echo -e "${MAGENTA}Would execute: ${BRIGHT_CYAN}$EXEC_CMD${NC}"
         if [[ $# -gt 0 ]]; then
@@ -1343,7 +1379,7 @@ handle_existing_container() {
         echo -e "${GREEN}Dry run complete - would have executed docker exec.${NC}"
         exit 0
       fi
-      
+
       if [[ $# -gt 0 ]]; then
         exec $EXEC_CMD "$@"
       else
@@ -1351,7 +1387,7 @@ handle_existing_container() {
       fi
     else
       echo -e "${MAGENTA}Container ${BRIGHT_CYAN}$CONTAINER_NAME${MAGENTA} exists but is not running. Starting it...${NC}"
-      
+
       if [[ "$DRY_RUN" == "true" ]]; then
         if [[ $# -gt 0 ]]; then
           echo -e "${MAGENTA}Would execute: ${BRIGHT_CYAN}docker start $CONTAINER_NAME${NC}"
@@ -1361,13 +1397,13 @@ handle_existing_container() {
               EXEC_CMD="$EXEC_CMD $arg"
             done
           fi
-          
+
           # Add forwarded environment variables
           FORWARDED_ENV_FLAGS=$(generate_forwarded_variables)
           if [[ -n "$FORWARDED_ENV_FLAGS" ]]; then
             EXEC_CMD="$EXEC_CMD$FORWARDED_ENV_FLAGS"
           fi
-          
+
           EXEC_CMD="$EXEC_CMD $CONTAINER_NAME /usr/local/bin/claude-exec"
           echo -e "${MAGENTA}Then execute: ${BRIGHT_CYAN}$EXEC_CMD${NC}"
           echo -e "${MAGENTA}With args: ${BRIGHT_CYAN}$*${NC}"
@@ -1377,7 +1413,7 @@ handle_existing_container() {
         echo -e "${GREEN}Dry run complete - would have started and executed commands.${NC}"
         exit 0
       fi
-      
+
       if [[ $# -gt 0 ]]; then
         # Start container and then execute command in it
         docker start "$CONTAINER_NAME" >/dev/null
@@ -1388,13 +1424,13 @@ handle_existing_container() {
             EXEC_CMD="$EXEC_CMD $arg"
           done
         fi
-        
+
         # Add forwarded environment variables
         FORWARDED_ENV_FLAGS=$(generate_forwarded_variables)
         if [[ -n "$FORWARDED_ENV_FLAGS" ]]; then
           EXEC_CMD="$EXEC_CMD$FORWARDED_ENV_FLAGS"
         fi
-        
+
         EXEC_CMD="$EXEC_CMD $CONTAINER_NAME /usr/local/bin/claude-exec"
         exec $EXEC_CMD "$@"
       else
