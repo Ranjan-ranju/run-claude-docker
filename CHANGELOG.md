@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `RUN_CLAUDE_NO_GPG` environment variable support  
   - Integration with `--safe` mode
   - Local-only Docker builds (removed automatic external pulls)
+  - `ANTHROPIC_MODEL` environment variable forwarding for model selection
 - **Development Tools**:
   - git-delta package for enhanced git diff output with syntax highlighting
   - `--extra-package` option to add custom Ubuntu packages during build (can be used multiple times)

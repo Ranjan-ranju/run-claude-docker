@@ -456,6 +456,10 @@ if [[ -n "$UNSPLASH_ACCESS_KEY" ]]; then
   DOCKER_CMD="$DOCKER_CMD -e UNSPLASH_ACCESS_KEY=$UNSPLASH_ACCESS_KEY"
 fi
 
+if [[ -n "$ANTHROPIC_MODEL" ]]; then
+  DOCKER_CMD="$DOCKER_CMD -e ANTHROPIC_MODEL=$ANTHROPIC_MODEL"
+fi
+
 # Add conditional bind-mount for host Claude config if it exists
 if [[ -f "$HOME/.claude.json" ]]; then
   DOCKER_CMD="$DOCKER_CMD -v $HOME/.claude.json:/home/$USERNAME/.claude.host.json:ro"
