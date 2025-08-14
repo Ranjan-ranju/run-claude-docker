@@ -1157,6 +1157,24 @@ fi
 # Handle existing container unless we want to remove it
 if [[ "$REMOVE_CONTAINER" == "false" && "$RECREATE_CONTAINER" == "false" ]]; then
   handle_existing_container "$@"
+elif [[ "$REMOVE_CONTAINER" == "true" ]]; then
+  # Check if container exists when using --rm
+  if docker ps -a --format "table {{.Names}}" | grep -q "^${CONTAINER_NAME}$"; then
+    echo -e "${RED}Error: Container ${BRIGHT_CYAN}$CONTAINER_NAME${RED} already exists!${NC}"
+    echo -e "${YELLOW}The --rm flag creates temporary containers, but a persistent container with this name already exists.${NC}"
+    echo ""
+    echo -e "${YELLOW}Choose one of these options:${NC}"
+    echo -e "${BRIGHT_CYAN}  # Use the existing container (recommended):${NC}"
+    echo -e "  $(basename $0) $*"
+    echo ""
+    echo -e "${BRIGHT_CYAN}  # Remove the existing container first:${NC}"
+    echo -e "  $(basename $0) --recreate --rm $*"
+    echo ""
+    echo -e "${BRIGHT_CYAN}  # Remove all stopped containers:${NC}"
+    echo -e "  $(basename $0) --remove-containers"
+    echo ""
+    exit 1
+  fi
 fi
 
 # Execute the command (for new containers or when --rm is used)
