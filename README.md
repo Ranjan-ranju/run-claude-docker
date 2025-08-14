@@ -187,12 +187,12 @@ Automatically mounted:
 
 The script makes a best effort to forward your Claude authentication into the container session:
 
-- **Seamless Login**: Your existing Claude authentication is automatically available
+- **Seamless Login**: Your existing Claude authentication is automatically available (after initial setup)
 - **OAuth Preservation**: Maintains your logged-in state and subscription access
 - **Config Merging**: Intelligently merges host Claude configuration with container settings
 - **Permission Bypass**: Automatically enables bypass permissions mode for streamlined operation
 
-No need to run `claude auth` inside the container - your host authentication is preserved and forwarded automatically.
+**Important:** On your first run, you may need to run `claude /login` inside the container. After that initial authentication, your login state is preserved and forwarded automatically for future runs.
 
 ## Testing the Setup
 
@@ -201,6 +201,9 @@ No need to run `claude auth` inside the container - your host authentication is 
 ```bash
 # First run will automatically pull the pre-built image from Docker Hub
 ./run-claude.sh claude auth status
+
+# If not authenticated, you'll need to login (usually only required once)
+./run-claude.sh claude /login
 
 # Test MCP servers are working
 ./run-claude.sh claude "search for sunset photos on unsplash"
@@ -315,12 +318,33 @@ docker run --rm -v $(pwd):/workspace claude-code:latest sudo chown -R claude:cla
 
 ### Authentication Issues
 
+**First Time Setup:**
+
+On your very first run, you may need to authenticate Claude inside the container:
+
+```bash
+# Check Claude authentication status
+./run-claude.sh claude auth status
+
+# If not authenticated, login (this is usually only needed once)
+./run-claude.sh claude /login
+```
+
+After the initial `/login`, the script automatically forwards your authentication between the host and container, so you shouldn't need to re-authenticate in future runs.
+
+**Note:** The authentication forwarding works most of the time but isn't bulletproof. If you encounter auth issues, try running `/login` again inside the container.
+
+**Troubleshooting Authentication:**
+
 ```bash
 # Check Claude config
 ./run-claude.sh claude auth status
 
 # Re-authenticate if needed
 ./run-claude.sh claude auth
+
+# Or use the web login method
+./run-claude.sh claude /login
 ```
 
 ### Image Not Found
