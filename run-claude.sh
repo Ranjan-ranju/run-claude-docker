@@ -55,6 +55,16 @@ DRY_RUN=false
 EXTRA_PACKAGES=()
 PASSTHROUGH_ARGS=()
 
+# List of environment variables to forward to the container
+FORWARDED_VARIABLES=(
+	"ANTHROPIC_API_KEY"
+	"OPENAI_API_KEY"
+	"NUGET_API_KEY"
+	"UNSPLASH_ACCESS_KEY"
+	"ANTHROPIC_MODEL"
+	"TERM"
+)
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -64,6 +74,22 @@ BRIGHT_CYAN='\033[1;36m'
 BLUE='\033[0;34m'
 WHITE='\033[1;37m'
 NC='\033[0m' # No Color
+
+# Generate -e flags for forwarded environment variables
+generate_forwarded_variables() {
+	local env_flags=""
+	local seen_vars=""
+	
+	# Process all forwarded variables (avoiding duplicates)
+	for var in "${FORWARDED_VARIABLES[@]}"; do
+		if [[ -n "${!var}" && "$seen_vars" != *"|$var|"* ]]; then
+			env_flags="$env_flags -e $var=${!var}"
+			seen_vars="$seen_vars|$var|"
+		fi
+	done
+	
+	echo "$env_flags"
+}
 
 # Format Docker command for pretty verbose output
 format_docker_command() {
@@ -158,7 +184,7 @@ _run_claude_completion() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
     
-    opts="-w --workspace -c --claude-config -n --name -i --image --rm --no-interactive --no-privileged --safe --no-gpg --gpg --build --rebuild --recreate --verbose --remove-containers --force-remove-all-containers --export-dockerfile --push-to --generate-completions --username --extra-package -h --help"
+    opts="-w --workspace -c --claude-config -n --name -i --image --rm --no-interactive --no-privileged --safe --no-gpg --gpg --build --rebuild --recreate --verbose --remove-containers --force-remove-all-containers --export-dockerfile --push-to --generate-completions --username --extra-package -E --forward-variable -h --help"
     
     case "${prev}" in
         -w|--workspace)
@@ -195,6 +221,10 @@ _run_claude_completion() {
             ;;
         --extra-package)
             COMPREPLY=( $(compgen -W "curl wget tmux htop nano emacs" -- ${cur}) )
+            return 0
+            ;;
+        -E|--forward-variable)
+            COMPREPLY=( $(compgen -W "AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY GITHUB_TOKEN" -- ${cur}) )
             return 0
             ;;
         *)
@@ -237,6 +267,8 @@ _run_claude_zsh_completion() {
         '--generate-completions[Generate shell completions]:shell:(bash zsh)'
         '--username[Set container username]:username:($(whoami))'
         '--extra-package[Add extra Ubuntu package]:package:(curl wget tmux htop nano emacs)'
+        '-E[Forward environment variable]:variable:(AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY GITHUB_TOKEN)'
+        '--forward-variable[Forward environment variable]:variable:(AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY GITHUB_TOKEN)'
         '(-h --help)'{-h,--help}'[Show help]'
     )
     _arguments -s -S $options
@@ -282,6 +314,9 @@ usage() {
   echo "  --username NAME         Set container username (default: current user)"
   echo "  --extra-package PACKAGE Add extra Ubuntu package to container (can be used multiple times)"
   echo "                          Only works with --build, --rebuild, or --export-dockerfile"
+  echo "  -E, --forward-variable VAR"
+  echo "                          Forward additional environment variable to container (can be used multiple times)"
+  echo "                          Use -E !VAR to exclude a variable from the default forwarded list"
   echo "  --                      Pass remaining arguments directly to docker run/exec"
   echo "  -h, --help              Show this help"
   echo ""
@@ -313,6 +348,15 @@ usage() {
   echo "  # Use environment variable for extra packages"
   echo "  RUN_CLAUDE_EXTRA_PACKAGES=\"tmux curl\" $(basename $0) --extra-package gpg --build"
   echo ""
+  echo "  # Forward additional environment variables"
+  echo "  $(basename $0) -E AWS_ACCESS_KEY_ID -E AWS_SECRET_ACCESS_KEY"
+  echo ""
+  echo "  # Exclude a default variable from being forwarded"
+  echo "  $(basename $0) -E !TERM -E AWS_ACCESS_KEY_ID"
+  echo ""
+  echo "  # Use environment variable for extra variables"
+  echo "  RUN_CLAUDE_EXTRA_VARIABLES=\"AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY\" $(basename $0)"
+  echo ""
   echo "  # Pass Docker arguments directly"
   echo "  $(basename $0) -- --env MY_VAR=value --volume /host:/container"
   echo ""
@@ -329,6 +373,9 @@ usage() {
   echo ""
   echo "  RUN_CLAUDE_EXTRA_PACKAGES  Space-separated list of extra Ubuntu packages to install"
   echo "                             Combined with --extra-package options during build"
+  echo ""
+  echo "  RUN_CLAUDE_EXTRA_VARIABLES Space-separated list of extra environment variables to forward"
+  echo "                             Combined with -E/--forward-variable options. Use !VAR to exclude variables"
   echo ""
   echo "  # Use custom image:"
   echo "  CLAUDE_CODE_IMAGE_NAME=myregistry/my-claude-code $(basename $0)"
@@ -430,6 +477,24 @@ while [[ $# -gt 0 ]]; do
     EXTRA_PACKAGES+=("$2")
     shift 2
     ;;
+  -E | --forward-variable)
+    var="$2"
+    if [[ "$var" =~ ^!(.+)$ ]]; then
+      # Remove variable from forwarded list
+      var_to_remove="${BASH_REMATCH[1]}"
+      new_array=()
+      for existing_var in "${FORWARDED_VARIABLES[@]}"; do
+        if [[ "$existing_var" != "$var_to_remove" ]]; then
+          new_array+=("$existing_var")
+        fi
+      done
+      FORWARDED_VARIABLES=("${new_array[@]}")
+    else
+      # Add variable to forwarded list
+      FORWARDED_VARIABLES+=("$var")
+    fi
+    shift 2
+    ;;
   -h | --help)
     usage
     exit 0
@@ -471,6 +536,28 @@ if [[ -n "$RUN_CLAUDE_EXTRA_PACKAGES" ]]; then
   # Convert space-separated string to array and append to EXTRA_PACKAGES
   IFS=' ' read -ra ENV_PACKAGES <<< "$RUN_CLAUDE_EXTRA_PACKAGES"
   EXTRA_PACKAGES+=("${ENV_PACKAGES[@]}")
+fi
+
+# Handle extra variables from environment variable
+if [[ -n "$RUN_CLAUDE_EXTRA_VARIABLES" ]]; then
+  # Convert space-separated string to array and process each variable
+  IFS=' ' read -ra ENV_VARIABLES <<< "$RUN_CLAUDE_EXTRA_VARIABLES"
+  for var in "${ENV_VARIABLES[@]}"; do
+    if [[ "$var" =~ ^!(.+)$ ]]; then
+      # Remove variable from forwarded list
+      var_to_remove="${BASH_REMATCH[1]}"
+      new_array=()
+      for existing_var in "${FORWARDED_VARIABLES[@]}"; do
+        if [[ "$existing_var" != "$var_to_remove" ]]; then
+          new_array+=("$existing_var")
+        fi
+      done
+      FORWARDED_VARIABLES=("${new_array[@]}")
+    else
+      # Add variable to forwarded list
+      FORWARDED_VARIABLES+=("$var")
+    fi
+  done
 fi
 
 # Validate conflicting options
@@ -537,12 +624,7 @@ DOCKER_CMD="$DOCKER_CMD \
 	-e CLAUDE_CONFIG_PATH=/home/$USERNAME/.claude \
 	-e CONTAINER_USER=$USERNAME"
 
-# Forward terminal settings
-if [[ -n "$TERM" ]]; then
-  DOCKER_CMD="$DOCKER_CMD \
-	-e TERM=$TERM"
-fi
-
+# Forward dangerous mode flags
 if [[ "$DANGEROUS_MODE" == "true" ]]; then
   DOCKER_CMD="$DOCKER_CMD \
 	-e CLAUDE_DANGEROUS_MODE=1 \
@@ -555,30 +637,10 @@ if [[ "$VERBOSE" == "true" ]]; then
 	-e RUN_CLAUDE_VERBOSE=1"
 fi
 
-# Forward API keys and secrets if they exist
-if [[ -n "$ANTHROPIC_API_KEY" ]]; then
-  DOCKER_CMD="$DOCKER_CMD \
-	-e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY"
-fi
-
-if [[ -n "$OPENAI_API_KEY" ]]; then
-  DOCKER_CMD="$DOCKER_CMD \
-	-e OPENAI_API_KEY=$OPENAI_API_KEY"
-fi
-
-if [[ -n "$NUGET_API_KEY" ]]; then
-  DOCKER_CMD="$DOCKER_CMD \
-	-e NUGET_API_KEY=$NUGET_API_KEY"
-fi
-
-if [[ -n "$UNSPLASH_ACCESS_KEY" ]]; then
-  DOCKER_CMD="$DOCKER_CMD \
-	-e UNSPLASH_ACCESS_KEY=$UNSPLASH_ACCESS_KEY"
-fi
-
-if [[ -n "$ANTHROPIC_MODEL" ]]; then
-  DOCKER_CMD="$DOCKER_CMD \
-	-e ANTHROPIC_MODEL=$ANTHROPIC_MODEL"
+# Forward environment variables from the FORWARDED_VARIABLES list
+FORWARDED_ENV_FLAGS=$(generate_forwarded_variables)
+if [[ -n "$FORWARDED_ENV_FLAGS" ]]; then
+  DOCKER_CMD="$DOCKER_CMD$FORWARDED_ENV_FLAGS"
 fi
 
 # Add conditional bind-mount for host Claude config if it exists
@@ -1234,13 +1296,20 @@ handle_existing_container() {
     # Check if container is running
     if docker ps --format "table {{.Names}}" | grep -q "^${CONTAINER_NAME}$"; then
       echo -e "${MAGENTA}Container ${BRIGHT_CYAN}$CONTAINER_NAME${MAGENTA} is already running. Executing command in existing container...${NC}"
-      # Build docker exec command with passthrough args
+      # Build docker exec command with passthrough args and environment variables
       EXEC_CMD="docker exec -it"
       if [[ ${#PASSTHROUGH_ARGS[@]} -gt 0 ]]; then
         for arg in "${PASSTHROUGH_ARGS[@]}"; do
           EXEC_CMD="$EXEC_CMD $arg"
         done
       fi
+      
+      # Add forwarded environment variables
+      FORWARDED_ENV_FLAGS=$(generate_forwarded_variables)
+      if [[ -n "$FORWARDED_ENV_FLAGS" ]]; then
+        EXEC_CMD="$EXEC_CMD$FORWARDED_ENV_FLAGS"
+      fi
+      
       EXEC_CMD="$EXEC_CMD $CONTAINER_NAME /usr/local/bin/claude-exec"
       
       if [[ "$DRY_RUN" == "true" ]]; then
@@ -1269,6 +1338,13 @@ handle_existing_container() {
               EXEC_CMD="$EXEC_CMD $arg"
             done
           fi
+          
+          # Add forwarded environment variables
+          FORWARDED_ENV_FLAGS=$(generate_forwarded_variables)
+          if [[ -n "$FORWARDED_ENV_FLAGS" ]]; then
+            EXEC_CMD="$EXEC_CMD$FORWARDED_ENV_FLAGS"
+          fi
+          
           EXEC_CMD="$EXEC_CMD $CONTAINER_NAME /usr/local/bin/claude-exec"
           echo -e "${MAGENTA}Then execute: ${BRIGHT_CYAN}$EXEC_CMD${NC}"
           echo -e "${MAGENTA}With args: ${BRIGHT_CYAN}$*${NC}"
@@ -1282,13 +1358,20 @@ handle_existing_container() {
       if [[ $# -gt 0 ]]; then
         # Start container and then execute command in it
         docker start "$CONTAINER_NAME" >/dev/null
-        # Build docker exec command with passthrough args
+        # Build docker exec command with passthrough args and environment variables
         EXEC_CMD="docker exec -it"
         if [[ ${#PASSTHROUGH_ARGS[@]} -gt 0 ]]; then
           for arg in "${PASSTHROUGH_ARGS[@]}"; do
             EXEC_CMD="$EXEC_CMD $arg"
           done
         fi
+        
+        # Add forwarded environment variables
+        FORWARDED_ENV_FLAGS=$(generate_forwarded_variables)
+        if [[ -n "$FORWARDED_ENV_FLAGS" ]]; then
+          EXEC_CMD="$EXEC_CMD$FORWARDED_ENV_FLAGS"
+        fi
+        
         EXEC_CMD="$EXEC_CMD $CONTAINER_NAME /usr/local/bin/claude-exec"
         exec $EXEC_CMD "$@"
       else
