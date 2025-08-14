@@ -412,7 +412,7 @@ fi
 if [[ -f "$HOME/.claude.json" ]]; then
   DOCKER_CMD="$DOCKER_CMD -v $HOME/.claude.json:/home/$CURRENT_USER/.claude.host.json:ro"
   if [[ "$VERBOSE" == "true" ]]; then
-    echo -e "${YELLOW}Host Claude config detected and will be mounted for merging${NC}"
+    echo -e "${MAGENTA}Host Claude config detected and will be mounted for merging${NC}"
   fi
 fi
 
@@ -435,7 +435,7 @@ if [[ -n "$SSH_AUTH_SOCK" && -S "$SSH_AUTH_SOCK" ]]; then
   DOCKER_CMD="$DOCKER_CMD -v $SSH_AGENT_PATH:/ssh-agent"
   DOCKER_CMD="$DOCKER_CMD -e SSH_AUTH_SOCK=/ssh-agent"
   if [[ "$VERBOSE" == "true" ]]; then
-    echo -e "${YELLOW}SSH agent socket detected and will be forwarded to container${NC}"
+    echo -e "${MAGENTA}SSH agent socket detected and will be forwarded to container${NC}"
   fi
 fi
 
@@ -449,12 +449,12 @@ if [[ "$ENABLE_GPG" == "true" && -d "$HOME/.gnupg" ]]; then
   if [[ -S "$GPG_EXTRA_SOCKET" ]]; then
     DOCKER_CMD="$DOCKER_CMD -v $GPG_EXTRA_SOCKET:/gpg-agent-extra"
     if [[ "$VERBOSE" == "true" ]]; then
-      echo -e "${YELLOW}GPG agent socket detected and will be forwarded to container${NC}"
+      echo -e "${MAGENTA}GPG agent socket detected and will be forwarded to container${NC}"
     fi
   fi
   
   if [[ "$VERBOSE" == "true" ]]; then
-    echo -e "${YELLOW}GPG directory detected and will be mounted to container${NC}"
+    echo -e "${MAGENTA}GPG directory detected and will be mounted to container${NC}"
   fi
 fi
 
@@ -468,10 +468,10 @@ fi
 
 # Print what we're about to run
 if [[ "$VERBOSE" == "true" ]]; then
-  echo -e "${GREEN}Running Claude Code container...${NC}"
-  echo -e "${YELLOW}Container name: $CONTAINER_NAME${NC}"
-  echo -e "${YELLOW}Workspace: $WORKSPACE_PATH${NC}"
-  echo -e "${YELLOW}Command: $DOCKER_CMD${NC}"
+  echo -e "${MAGENTA}Running Claude Code container...${NC}"
+  echo -e "${MAGENTA}Container name: ${BRIGHT_CYAN}$CONTAINER_NAME${NC}"
+  echo -e "${MAGENTA}Workspace: ${BRIGHT_CYAN}$WORKSPACE_PATH${NC}"
+  echo -e "${MAGENTA}Command: ${BRIGHT_CYAN}$DOCKER_CMD${NC}"
   echo ""
 fi
 
