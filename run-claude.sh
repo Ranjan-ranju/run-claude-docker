@@ -51,6 +51,7 @@ FORCE_REMOVE_ALL_CONTAINERS=false
 EXPORT_DOCKERFILE=""
 PUSH_TO_REPO=""
 ENABLE_GPG=true
+EXTRA_PACKAGES=()
 
 # Colors for output
 RED='\033[0;31m'
@@ -78,7 +79,7 @@ _run_claude_completion() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
     
-    opts="-w --workspace -c --claude-config -n --name -i --image --rm --no-interactive --no-privileged --safe --no-gpg --gpg --build --rebuild --recreate --verbose --remove-containers --force-remove-all-containers --export-dockerfile --push-to --generate-completions --username -h --help"
+    opts="-w --workspace -c --claude-config -n --name -i --image --rm --no-interactive --no-privileged --safe --no-gpg --gpg --build --rebuild --recreate --verbose --remove-containers --force-remove-all-containers --export-dockerfile --push-to --generate-completions --username --extra-package -h --help"
     
     case "${prev}" in
         -w|--workspace)
@@ -111,6 +112,10 @@ _run_claude_completion() {
             ;;
         --username)
             COMPREPLY=( $(compgen -W "$(whoami)" -- ${cur}) )
+            return 0
+            ;;
+        --extra-package)
+            COMPREPLY=( $(compgen -W "curl wget tmux htop nano emacs" -- ${cur}) )
             return 0
             ;;
         *)
@@ -152,6 +157,7 @@ _run_claude_zsh_completion() {
         '--push-to[Tag and push image to repository]:repository:'
         '--generate-completions[Generate shell completions]:shell:(bash zsh)'
         '--username[Set container username]:username:($(whoami))'
+        '--extra-package[Add extra Ubuntu package]:package:(curl wget tmux htop nano emacs)'
         '(-h --help)'{-h,--help}'[Show help]'
     )
     _arguments -s -S $options
@@ -194,6 +200,8 @@ usage() {
   echo "  --generate-completions SHELL"
   echo "                          Generate shell completions (bash|zsh) and exit"
   echo "  --username NAME         Set container username (default: current user)"
+  echo "  --extra-package PACKAGE Add extra Ubuntu package to container (can be used multiple times)"
+  echo "                          Only works with --build, --rebuild, or --export-dockerfile"
   echo "  -h, --help              Show this help"
   echo ""
   echo "EXAMPLES:"
@@ -218,6 +226,12 @@ usage() {
   echo "  # Push to Docker Hub"
   echo "  $0 --push-to docker.io/username/claude-code:latest"
   echo ""
+  echo "  # Add extra packages during build"
+  echo "  $0 --extra-package tmux --extra-package curl --build"
+  echo ""
+  echo "  # Use environment variable for extra packages"
+  echo "  RUN_CLAUDE_EXTRA_PACKAGES=\"tmux curl\" $0 --extra-package gpg --build"
+  echo ""
   echo "  # Install shell completions"
   echo "  # For bash:"
   echo "  echo 'eval \"\$($0 --generate-completions bash)\"' >> ~/.bashrc"
@@ -228,6 +242,9 @@ usage() {
   echo "ENVIRONMENT VARIABLES:"
   echo "  CLAUDE_CODE_IMAGE_NAME  Override the default Docker Hub image (default: icanhasjonas/claude-code)"
   echo "                          Note: :latest tag is automatically appended"
+  echo ""
+  echo "  RUN_CLAUDE_EXTRA_PACKAGES  Space-separated list of extra Ubuntu packages to install"
+  echo "                             Combined with --extra-package options during build"
   echo ""
   echo "  # Use custom image:"
   echo "  CLAUDE_CODE_IMAGE_NAME=myregistry/my-claude-code $0"
@@ -321,6 +338,10 @@ while [[ $# -gt 0 ]]; do
     USERNAME="$2"
     shift 2
     ;;
+  --extra-package)
+    EXTRA_PACKAGES+=("$2")
+    shift 2
+    ;;
   -h | --help)
     usage
     exit 0
@@ -337,11 +358,27 @@ if [[ "$RUN_CLAUDE_NO_GPG" == "1" && "$ENABLE_GPG" == "true" ]]; then
   ENABLE_GPG=false
 fi
 
+# Handle extra packages from environment variable
+if [[ -n "$RUN_CLAUDE_EXTRA_PACKAGES" ]]; then
+  # Convert space-separated string to array and append to EXTRA_PACKAGES
+  IFS=' ' read -ra ENV_PACKAGES <<< "$RUN_CLAUDE_EXTRA_PACKAGES"
+  EXTRA_PACKAGES+=("${ENV_PACKAGES[@]}")
+fi
+
 # Validate conflicting options
 if [[ "$FORCE_PULL" == "true" && "$BUILD_ONLY" == "true" ]]; then
   echo -e "${RED}Error: Cannot use --pull and --build together${NC}"
   echo -e "${YELLOW}Choose one: --pull (to pull latest image) or --build (to build locally)${NC}"
   exit 1
+fi
+
+# Validate that --extra-package is only used with appropriate commands
+if [[ ${#EXTRA_PACKAGES[@]} -gt 0 ]]; then
+  if [[ "$BUILD_ONLY" != "true" && "$FORCE_REBUILD" != "true" && -z "$EXPORT_DOCKERFILE" ]]; then
+    echo -e "${RED}Error: --extra-package can only be used with --build, --rebuild, or --export-dockerfile${NC}"
+    echo -e "${YELLOW}Extra packages are only applied during image building operations${NC}"
+    exit 1
+  fi
 fi
 
 # Validate paths
@@ -627,6 +664,49 @@ force_remove_all_containers() {
 
 # Function to generate Dockerfile content
 generate_dockerfile_content() {
+  # Build the base package list
+  local base_packages=(
+    "build-essential"
+    "ca-certificates"
+    "curl"
+    "wget"
+    "git"
+    "python3"
+    "unzip"
+    "python3-pip"
+    "sudo"
+    "fzf"
+    "zsh"
+    "gh"
+    "vim"
+    "neovim"
+    "htop"
+    "jq"
+    "tree"
+    "ripgrep"
+    "fd-find"
+    "gpg"
+    "git-delta"
+  )
+
+  # Add extra packages to the list
+  local all_packages=("${base_packages[@]}")
+  if [[ ${#EXTRA_PACKAGES[@]} -gt 0 ]]; then
+    all_packages+=("${EXTRA_PACKAGES[@]}")
+  fi
+
+  # Generate the package installation lines
+  local package_lines=""
+  for ((i=0; i<${#all_packages[@]}; i++)); do
+    if [[ $i -eq $((${#all_packages[@]}-1)) ]]; then
+      # Last package, no backslash since we're ending the RUN instruction
+      package_lines+=$'\t'"${all_packages[i]}"
+    else
+      # Not last package, add backslash and newline
+      package_lines+=$'\t'"${all_packages[i]}"$' \\\n'
+    fi
+  done
+
   cat <<'DOCKERFILE_EOF'
 # vim: set ft=dockerfile:
 
@@ -637,28 +717,15 @@ FROM ubuntu:25.04 AS base-tools
 
 # Install system dependencies including zsh and tools
 RUN apt-get update && apt-get install -y \
-	build-essential \
-	ca-certificates \
-	curl \
-	wget \
-	git \
-	python3 \
-	unzip \
-	python3-pip \
-	sudo \
-	fzf \
-	zsh \
-	gh \
-	vim \
-	neovim \
-	htop \
-	jq \
-	tree \
-	ripgrep \
-	fd-find \
-	gpg \
-	git-delta \
-	&& rm -rf /var/lib/apt/lists/*
+DOCKERFILE_EOF
+
+  # Insert the dynamic package list
+  echo -e "$package_lines"
+  
+  cat <<'DOCKERFILE_EOF'
+
+# Clean up apt cache
+RUN rm -rf /var/lib/apt/lists/*
 
 # Install Go
 RUN ARCH=$(dpkg --print-architecture) && \

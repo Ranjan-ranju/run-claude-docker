@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Local-only Docker builds (removed automatic external pulls)
 - **Development Tools**:
   - git-delta package for enhanced git diff output with syntax highlighting
+  - `--extra-package` option to add custom Ubuntu packages during build (can be used multiple times)
+  - `RUN_CLAUDE_EXTRA_PACKAGES` environment variable for space-separated package list
+  - Dynamic Dockerfile generation with proper package management
 - **Improved User Experience**:
   - Verbose mode forwarding to containers (`RUN_CLAUDE_VERBOSE=1`)
   - Enhanced ANSI color coding (dark magenta for text, bright cyan for variables)
