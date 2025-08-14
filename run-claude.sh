@@ -60,7 +60,59 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 MAGENTA='\033[0;35m'
 BRIGHT_CYAN='\033[1;36m'
+BLUE='\033[0;34m'
+WHITE='\033[1;37m'
 NC='\033[0m' # No Color
+
+# Format Docker command for pretty verbose output
+format_docker_command() {
+	local cmd="$1"
+	
+	# First normalize the command: remove existing backslashes and tabs, then add proper breaks
+	echo "$cmd" | tr -d '\\\n\t' | sed -E 's/ (-[a-z]|--[a-z-]+)/ \\\n  \1/g' | while IFS= read -r line; do
+		# Color the first line (docker run command)
+		if [[ "$line" =~ ^docker\ run ]]; then
+			printf "${WHITE}%s${NC}\n" "$line"
+		# Color environment and volume flags specially
+		elif [[ "$line" =~ ^[[:space:]]*(-[ev])[[:space:]]+(.+)$ ]]; then
+			flag="${BASH_REMATCH[1]}"
+			value="${BASH_REMATCH[2]}"
+			
+			# Special handling for -v flags to colorize name:value parts
+			if [[ "$flag" == "-v" && "$value" =~ ^([^:]+):(.+)$ ]]; then
+				name="${BASH_REMATCH[1]}"
+				dest="${BASH_REMATCH[2]}"
+				printf "    ${YELLOW}%s${NC} ${MAGENTA}%s${NC}:${BRIGHT_CYAN}%s${NC}\n" "$flag" "$name" "$dest"
+			# Special handling for -e flags to colorize name=value parts
+			elif [[ "$flag" == "-e" && "$value" =~ ^([^=]+)=(.+)$ ]]; then
+				name="${BASH_REMATCH[1]}"
+				val="${BASH_REMATCH[2]}"
+				printf "    ${YELLOW}%s${NC} ${MAGENTA}%s${NC}=${BRIGHT_CYAN}%s${NC}\n" "$flag" "$name" "$val"
+			else
+				printf "    ${YELLOW}%s${NC} ${BRIGHT_CYAN}%s${NC}\n" "$flag" "$value"
+			fi
+		# Color other flags with special handling for --label and --name
+		elif [[ "$line" =~ ^[[:space:]]*(-[a-z]|--[a-z-]+) ]]; then
+			# Special handling for --label flags to colorize name=value parts
+			if [[ "$line" =~ ^([[:space:]]*--label[[:space:]]+)([^=]+)=(.+)$ ]]; then
+				flag_part="${BASH_REMATCH[1]}"
+				name="${BASH_REMATCH[2]}"
+				value="${BASH_REMATCH[3]}"
+				printf "${BLUE}%s${MAGENTA}%s${NC}=${BRIGHT_CYAN}%s${NC}\n" "$flag_part" "$name" "$value"
+			# Special handling for --name flags to colorize the name value
+			elif [[ "$line" =~ ^([[:space:]]*--name[[:space:]]+)(.+)$ ]]; then
+				flag_part="${BASH_REMATCH[1]}"
+				name_value="${BASH_REMATCH[2]}"
+				printf "${BLUE}%s${BRIGHT_CYAN}%s${NC}\n" "$flag_part" "$name_value"
+			else
+				printf "${BLUE}%s${NC}\n" "$line"
+			fi
+		# Everything else (like image name at the end)
+		else
+			printf "%s\n" "$line"
+		fi
+	done
+}
 
 # Generate shell completions
 generate_completions() {
@@ -448,69 +500,87 @@ DOCKER_CMD="$DOCKER_CMD --label run-claude.username=$USERNAME"
 WORKSPACE_BASENAME=$(basename "$WORKSPACE_PATH")
 
 # Add environment variables
-DOCKER_CMD="$DOCKER_CMD -e NODE_OPTIONS=--max-old-space-size=8192"
-DOCKER_CMD="$DOCKER_CMD -e WORKSPACE_PATH=/home/$USERNAME/$WORKSPACE_BASENAME"
-DOCKER_CMD="$DOCKER_CMD -e CLAUDE_CONFIG_PATH=/home/$USERNAME/.claude"
-DOCKER_CMD="$DOCKER_CMD -e CONTAINER_USER=$USERNAME"
+DOCKER_CMD="$DOCKER_CMD \
+	-e NODE_OPTIONS=--max-old-space-size=8192 \
+	-e WORKSPACE_PATH=/home/$USERNAME/$WORKSPACE_BASENAME \
+	-e CLAUDE_CONFIG_PATH=/home/$USERNAME/.claude \
+	-e CONTAINER_USER=$USERNAME"
 
 # Forward terminal settings
 if [[ -n "$TERM" ]]; then
-  DOCKER_CMD="$DOCKER_CMD -e TERM=$TERM"
+  DOCKER_CMD="$DOCKER_CMD \
+	-e TERM=$TERM"
 fi
 
 if [[ "$DANGEROUS_MODE" == "true" ]]; then
-  DOCKER_CMD="$DOCKER_CMD -e CLAUDE_DANGEROUS_MODE=1"
-  DOCKER_CMD="$DOCKER_CMD -e ANTHROPIC_DANGEROUS_MODE=1"
+  DOCKER_CMD="$DOCKER_CMD \
+	-e CLAUDE_DANGEROUS_MODE=1 \
+	-e ANTHROPIC_DANGEROUS_MODE=1"
 fi
 
 # Forward verbose mode to container
 if [[ "$VERBOSE" == "true" ]]; then
-  DOCKER_CMD="$DOCKER_CMD -e RUN_CLAUDE_VERBOSE=1"
+  DOCKER_CMD="$DOCKER_CMD \
+	-e RUN_CLAUDE_VERBOSE=1"
 fi
 
 # Forward API keys and secrets if they exist
+if [[ -n "$ANTHROPIC_API_KEY" ]]; then
+  DOCKER_CMD="$DOCKER_CMD \
+	-e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY"
+fi
+
 if [[ -n "$OPENAI_API_KEY" ]]; then
-  DOCKER_CMD="$DOCKER_CMD -e OPENAI_API_KEY=$OPENAI_API_KEY"
+  DOCKER_CMD="$DOCKER_CMD \
+	-e OPENAI_API_KEY=$OPENAI_API_KEY"
 fi
 
 if [[ -n "$NUGET_API_KEY" ]]; then
-  DOCKER_CMD="$DOCKER_CMD -e NUGET_API_KEY=$NUGET_API_KEY"
+  DOCKER_CMD="$DOCKER_CMD \
+	-e NUGET_API_KEY=$NUGET_API_KEY"
 fi
 
 if [[ -n "$UNSPLASH_ACCESS_KEY" ]]; then
-  DOCKER_CMD="$DOCKER_CMD -e UNSPLASH_ACCESS_KEY=$UNSPLASH_ACCESS_KEY"
+  DOCKER_CMD="$DOCKER_CMD \
+	-e UNSPLASH_ACCESS_KEY=$UNSPLASH_ACCESS_KEY"
 fi
 
 if [[ -n "$ANTHROPIC_MODEL" ]]; then
-  DOCKER_CMD="$DOCKER_CMD -e ANTHROPIC_MODEL=$ANTHROPIC_MODEL"
+  DOCKER_CMD="$DOCKER_CMD \
+	-e ANTHROPIC_MODEL=$ANTHROPIC_MODEL"
 fi
 
 # Add conditional bind-mount for host Claude config if it exists
 if [[ -f "$HOME/.claude.json" ]]; then
-  DOCKER_CMD="$DOCKER_CMD -v $HOME/.claude.json:/home/$USERNAME/.claude.host.json:ro"
+  DOCKER_CMD="$DOCKER_CMD \
+	-v $HOME/.claude.json:/home/$USERNAME/.claude.host.json:ro"
   if [[ "$VERBOSE" == "true" ]]; then
     echo -e "${MAGENTA}Host Claude config detected and will be mounted for merging${NC}"
   fi
 fi
 
 # Add volume mounts
-DOCKER_CMD="$DOCKER_CMD -v $CLAUDE_CONFIG_PATH:/home/$USERNAME/.claude"
-DOCKER_CMD="$DOCKER_CMD -v $WORKSPACE_PATH:/home/$USERNAME/$WORKSPACE_BASENAME"
+DOCKER_CMD="$DOCKER_CMD \
+	-v $CLAUDE_CONFIG_PATH:/home/$USERNAME/.claude \
+	-v $WORKSPACE_PATH:/home/$USERNAME/$WORKSPACE_BASENAME"
 
 # Add optional read-only mounts if they exist
 if [[ -d "$HOME/.ssh" ]]; then
-  DOCKER_CMD="$DOCKER_CMD -v $HOME/.ssh:/home/$USERNAME/.ssh:ro"
+  DOCKER_CMD="$DOCKER_CMD \
+	-v $HOME/.ssh:/home/$USERNAME/.ssh:ro"
 fi
 
 if [[ -f "$HOME/.gitconfig" ]]; then
-  DOCKER_CMD="$DOCKER_CMD -v $HOME/.gitconfig:/home/$USERNAME/.gitconfig:ro"
+  DOCKER_CMD="$DOCKER_CMD \
+	-v $HOME/.gitconfig:/home/$USERNAME/.gitconfig:ro"
 fi
 
 # Forward SSH agent if available
 if [[ -n "$SSH_AUTH_SOCK" && -S "$SSH_AUTH_SOCK" ]]; then
   SSH_AGENT_PATH=$(readlink -f "$SSH_AUTH_SOCK")
-  DOCKER_CMD="$DOCKER_CMD -v $SSH_AGENT_PATH:/ssh-agent"
-  DOCKER_CMD="$DOCKER_CMD -e SSH_AUTH_SOCK=/ssh-agent"
+  DOCKER_CMD="$DOCKER_CMD \
+	-v $SSH_AGENT_PATH:/ssh-agent \
+	-e SSH_AUTH_SOCK=/ssh-agent"
   if [[ "$VERBOSE" == "true" ]]; then
     echo -e "${MAGENTA}SSH agent socket detected and will be forwarded to container${NC}"
   fi
@@ -519,12 +589,14 @@ fi
 # Forward GPG directory and agent if available
 if [[ "$ENABLE_GPG" == "true" && -d "$HOME/.gnupg" ]]; then
   # Mount GPG directory (read-write for agent communication)
-  DOCKER_CMD="$DOCKER_CMD -v $HOME/.gnupg:/home/$USERNAME/.gnupg"
+  DOCKER_CMD="$DOCKER_CMD \
+	-v $HOME/.gnupg:/home/$USERNAME/.gnupg"
 
   # Forward GPG agent extra socket if available
   GPG_EXTRA_SOCKET=$(gpgconf --list-dirs agent-extra-socket 2>/dev/null)
   if [[ -S "$GPG_EXTRA_SOCKET" ]]; then
-    DOCKER_CMD="$DOCKER_CMD -v $GPG_EXTRA_SOCKET:/gpg-agent-extra"
+    DOCKER_CMD="$DOCKER_CMD \
+	-v $GPG_EXTRA_SOCKET:/gpg-agent-extra"
     if [[ "$VERBOSE" == "true" ]]; then
       echo -e "${MAGENTA}GPG agent socket detected and will be forwarded to container${NC}"
     fi
@@ -555,7 +627,8 @@ if [[ "$VERBOSE" == "true" ]]; then
   echo -e "${MAGENTA}Running Claude Code container...${NC}"
   echo -e "${MAGENTA}Container name: ${BRIGHT_CYAN}$CONTAINER_NAME${NC}"
   echo -e "${MAGENTA}Workspace: ${BRIGHT_CYAN}$WORKSPACE_PATH${NC}"
-  echo -e "${MAGENTA}Command: ${BRIGHT_CYAN}$DOCKER_CMD${NC}"
+  echo -e "${MAGENTA}Command:${NC}"
+  format_docker_command "$DOCKER_CMD"
   echo ""
 fi
 
