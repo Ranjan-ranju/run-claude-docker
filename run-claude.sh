@@ -24,7 +24,8 @@
 
 set -e
 
-# Default values
+# Version and default values
+VERSION="1.0.0"
 IMAGE_NAME="claude-code:latest"
 WORKSPACE_PATH="$(pwd)"
 
@@ -49,6 +50,7 @@ FORCE_REMOVE_ALL_CONTAINERS=false
 EXPORT_DOCKERFILE=""
 PUSH_TO_REPO=""
 ENABLE_GPG=true
+USERNAME="$(whoami)"
 
 # Colors for output
 RED='\033[0;31m'
@@ -76,7 +78,7 @@ _run_claude_completion() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
     
-    opts="-w --workspace -c --claude-config -n --name -i --image --rm --no-interactive --no-privileged --safe --no-gpg --gpg --build --rebuild --recreate --verbose --remove-containers --force-remove-all-containers --export-dockerfile --push-to --generate-completions -h --help"
+    opts="-w --workspace -c --claude-config -n --name -i --image --rm --no-interactive --no-privileged --safe --no-gpg --gpg --build --rebuild --recreate --verbose --remove-containers --force-remove-all-containers --export-dockerfile --push-to --generate-completions --username -h --help"
     
     case "${prev}" in
         -w|--workspace)
@@ -105,6 +107,10 @@ _run_claude_completion() {
             ;;
         --generate-completions)
             COMPREPLY=( $(compgen -W "bash zsh" -- ${cur}) )
+            return 0
+            ;;
+        --username)
+            COMPREPLY=( $(compgen -W "$(whoami)" -- ${cur}) )
             return 0
             ;;
         *)
@@ -145,6 +151,7 @@ _run_claude_zsh_completion() {
         '--export-dockerfile[Export the embedded Dockerfile]:file:_files'
         '--push-to[Tag and push image to repository]:repository:'
         '--generate-completions[Generate shell completions]:shell:(bash zsh)'
+        '--username[Set container username]:username:($(whoami))'
         '(-h --help)'{-h,--help}'[Show help]'
     )
     _arguments -s -S $options
@@ -186,6 +193,7 @@ usage() {
   echo "  --push-to REPO          Tag and push image to repository (e.g., docker.io/user/repo:tag)"
   echo "  --generate-completions SHELL"
   echo "                          Generate shell completions (bash|zsh) and exit"
+  echo "  --username NAME         Set container username (default: current user)"
   echo "  -h, --help              Show this help"
   echo ""
   echo "EXAMPLES:"
@@ -309,6 +317,10 @@ while [[ $# -gt 0 ]]; do
     generate_completions "$2"
     exit 0
     ;;
+  --username)
+    USERNAME="$2"
+    shift 2
+    ;;
   -h | --help)
     usage
     exit 0
@@ -367,18 +379,17 @@ DOCKER_CMD="$DOCKER_CMD --network host"
 DOCKER_CMD="$DOCKER_CMD --label run-claude.managed=true"
 DOCKER_CMD="$DOCKER_CMD --label run-claude.workspace=$WORKSPACE_PATH"
 DOCKER_CMD="$DOCKER_CMD --label run-claude.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-
-# Get current user info
-CURRENT_USER=$(whoami)
+DOCKER_CMD="$DOCKER_CMD --label run-claude.version=$VERSION"
+DOCKER_CMD="$DOCKER_CMD --label run-claude.username=$USERNAME"
 
 # Get basename of workspace for container mapping
 WORKSPACE_BASENAME=$(basename "$WORKSPACE_PATH")
 
 # Add environment variables
 DOCKER_CMD="$DOCKER_CMD -e NODE_OPTIONS=--max-old-space-size=8192"
-DOCKER_CMD="$DOCKER_CMD -e WORKSPACE_PATH=/home/$CURRENT_USER/$WORKSPACE_BASENAME"
-DOCKER_CMD="$DOCKER_CMD -e CLAUDE_CONFIG_PATH=/home/$CURRENT_USER/.claude"
-DOCKER_CMD="$DOCKER_CMD -e CONTAINER_USER=$CURRENT_USER"
+DOCKER_CMD="$DOCKER_CMD -e WORKSPACE_PATH=/home/$USERNAME/$WORKSPACE_BASENAME"
+DOCKER_CMD="$DOCKER_CMD -e CLAUDE_CONFIG_PATH=/home/$USERNAME/.claude"
+DOCKER_CMD="$DOCKER_CMD -e CONTAINER_USER=$USERNAME"
 
 # Forward terminal settings
 if [[ -n "$TERM" ]]; then
@@ -410,23 +421,23 @@ fi
 
 # Add conditional bind-mount for host Claude config if it exists
 if [[ -f "$HOME/.claude.json" ]]; then
-  DOCKER_CMD="$DOCKER_CMD -v $HOME/.claude.json:/home/$CURRENT_USER/.claude.host.json:ro"
+  DOCKER_CMD="$DOCKER_CMD -v $HOME/.claude.json:/home/$USERNAME/.claude.host.json:ro"
   if [[ "$VERBOSE" == "true" ]]; then
     echo -e "${MAGENTA}Host Claude config detected and will be mounted for merging${NC}"
   fi
 fi
 
 # Add volume mounts
-DOCKER_CMD="$DOCKER_CMD -v $CLAUDE_CONFIG_PATH:/home/$CURRENT_USER/.claude"
-DOCKER_CMD="$DOCKER_CMD -v $WORKSPACE_PATH:/home/$CURRENT_USER/$WORKSPACE_BASENAME"
+DOCKER_CMD="$DOCKER_CMD -v $CLAUDE_CONFIG_PATH:/home/$USERNAME/.claude"
+DOCKER_CMD="$DOCKER_CMD -v $WORKSPACE_PATH:/home/$USERNAME/$WORKSPACE_BASENAME"
 
 # Add optional read-only mounts if they exist
 if [[ -d "$HOME/.ssh" ]]; then
-  DOCKER_CMD="$DOCKER_CMD -v $HOME/.ssh:/home/$CURRENT_USER/.ssh:ro"
+  DOCKER_CMD="$DOCKER_CMD -v $HOME/.ssh:/home/$USERNAME/.ssh:ro"
 fi
 
 if [[ -f "$HOME/.gitconfig" ]]; then
-  DOCKER_CMD="$DOCKER_CMD -v $HOME/.gitconfig:/home/$CURRENT_USER/.gitconfig:ro"
+  DOCKER_CMD="$DOCKER_CMD -v $HOME/.gitconfig:/home/$USERNAME/.gitconfig:ro"
 fi
 
 # Forward SSH agent if available
@@ -442,8 +453,8 @@ fi
 # Forward GPG directory and agent if available
 if [[ "$ENABLE_GPG" == "true" && -d "$HOME/.gnupg" ]]; then
   # Mount GPG directory (read-write for agent communication)
-  DOCKER_CMD="$DOCKER_CMD -v $HOME/.gnupg:/home/$CURRENT_USER/.gnupg"
-  
+  DOCKER_CMD="$DOCKER_CMD -v $HOME/.gnupg:/home/$USERNAME/.gnupg"
+
   # Forward GPG agent extra socket if available
   GPG_EXTRA_SOCKET=$(gpgconf --list-dirs agent-extra-socket 2>/dev/null)
   if [[ -S "$GPG_EXTRA_SOCKET" ]]; then
@@ -452,7 +463,7 @@ if [[ "$ENABLE_GPG" == "true" && -d "$HOME/.gnupg" ]]; then
       echo -e "${MAGENTA}GPG agent socket detected and will be forwarded to container${NC}"
     fi
   fi
-  
+
   if [[ "$VERBOSE" == "true" ]]; then
     echo -e "${MAGENTA}GPG directory detected and will be mounted to container${NC}"
   fi
@@ -487,7 +498,7 @@ build_image() {
   generate_dockerfile_content >"$TEMP_DIR/Dockerfile"
 
   # Build the image
-  if docker build --build-arg USERNAME="$CURRENT_USER" -t "$IMAGE_NAME" "$TEMP_DIR"; then
+  if docker build --build-arg USERNAME="$USERNAME" -t "$IMAGE_NAME" "$TEMP_DIR"; then
     echo -e "${MAGENTA}Successfully built ${BRIGHT_CYAN}$IMAGE_NAME${NC}"
   else
     echo -e "${RED}Failed to build Docker image${NC}"
@@ -498,7 +509,7 @@ build_image() {
 # Function to pull and tag remote image
 pull_remote_image() {
   local REMOTE_IMAGE="${CLAUDE_CODE_IMAGE_NAME:-icanhasjonas/claude-code}:latest"
-  
+
   echo -e "${MAGENTA}Pulling remote image ${BRIGHT_CYAN}$REMOTE_IMAGE${MAGENTA}...${NC}"
   if docker pull "$REMOTE_IMAGE"; then
     echo -e "${MAGENTA}Successfully pulled ${BRIGHT_CYAN}$REMOTE_IMAGE${NC}"
@@ -516,11 +527,12 @@ pull_remote_image() {
   fi
 }
 
-# Function to check if image exists and pull/build if necessary
+# Function to check if image exists and build if necessary
 build_image_if_missing() {
   if ! docker image inspect "$IMAGE_NAME" &>/dev/null; then
     echo -e "${YELLOW}Docker image $IMAGE_NAME not found.${NC}"
-    pull_remote_image
+    echo -e "${YELLOW}Building image locally...${NC}"
+    build_image
   fi
 }
 
@@ -657,10 +669,10 @@ ENV PATH=/usr/local/go/bin:$PATH
 ENV CGO_ENABLED=0
 
 # Create user
-ARG USERNAME
-RUN useradd -m -s /bin/zsh ${USERNAME:-claude} \
-	&& echo ${USERNAME:-claude} ALL=\(root\) NOPASSWD:ALL > /etc/sudoers.d/${USERNAME:-claude} \
-	&& chmod 0440 /etc/sudoers.d/${USERNAME:-claude}
+ARG USERNAME=claude-user
+RUN useradd -m -s /bin/zsh ${USERNAME} \
+	&& echo ${USERNAME} ALL=\(root\) NOPASSWD:ALL > /etc/sudoers.d/${USERNAME} \
+	&& chmod 0440 /etc/sudoers.d/${USERNAME}
 
 # Build and install Unsplash MCP server
 WORKDIR /tmp
@@ -861,7 +873,7 @@ export_dockerfile() {
   generate_dockerfile_content >"$OUTPUT_FILE"
 
   echo -e "${MAGENTA}Dockerfile exported successfully!${NC}"
-  echo -e "${YELLOW}To build: docker build --build-arg USERNAME=\$(whoami) -t your-image-name .${NC}"
+  echo -e "${YELLOW}To build: docker build --build-arg USERNAME=claude-user -t your-image-name .${NC}"
 }
 
 # Function to push image to repository
@@ -952,6 +964,19 @@ fi
 handle_existing_container() {
   if docker ps -a --format "table {{.Names}}" | grep -q "^${CONTAINER_NAME}$"; then
     echo -e "${MAGENTA}Container ${BRIGHT_CYAN}$CONTAINER_NAME${MAGENTA} already exists.${NC}"
+
+    # Check version compatibility
+    CONTAINER_VERSION=$(docker inspect --format '{{index .Config.Labels "run-claude.version"}}' "$CONTAINER_NAME" 2>/dev/null || echo "unknown")
+    if [[ "$CONTAINER_VERSION" != "$VERSION" ]]; then
+      echo -e "${YELLOW}⚠️  Version mismatch detected!${NC}"
+      echo -e "${YELLOW}   Container version: ${BRIGHT_CYAN}$CONTAINER_VERSION${NC}"
+      echo -e "${YELLOW}   Script version:    ${BRIGHT_CYAN}$VERSION${NC}"
+      echo -e "${YELLOW}   This may cause authentication or compatibility issues.${NC}"
+      echo ""
+      echo -e "${YELLOW}To upgrade the container:${NC}"
+      echo -e "${BRIGHT_CYAN}   $0 --remove-containers && $0 --build${NC}"
+      echo ""
+    fi
 
     # Check if container is running
     if docker ps --format "table {{.Names}}" | grep -q "^${CONTAINER_NAME}$"; then
