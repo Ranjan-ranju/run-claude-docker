@@ -26,7 +26,8 @@ set -e
 
 # Version and default values
 VERSION="1.0.0"
-IMAGE_NAME="claude-code:latest"
+USERNAME="$(whoami)"
+IMAGE_NAME="claude-code-${USERNAME}:latest"
 WORKSPACE_PATH="$(pwd)"
 
 # Generate container name based on workspace path
@@ -50,7 +51,6 @@ FORCE_REMOVE_ALL_CONTAINERS=false
 EXPORT_DOCKERFILE=""
 PUSH_TO_REPO=""
 ENABLE_GPG=true
-USERNAME="$(whoami)"
 
 # Colors for output
 RED='\033[0;31m'
