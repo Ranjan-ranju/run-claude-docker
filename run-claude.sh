@@ -405,6 +405,16 @@ if [[ -f "$HOME/.gitconfig" ]]; then
   DOCKER_CMD="$DOCKER_CMD -v $HOME/.gitconfig:/home/$CURRENT_USER/.gitconfig:ro"
 fi
 
+# Forward SSH agent if available
+if [[ -n "$SSH_AUTH_SOCK" && -S "$SSH_AUTH_SOCK" ]]; then
+  SSH_AGENT_PATH=$(readlink -f "$SSH_AUTH_SOCK")
+  DOCKER_CMD="$DOCKER_CMD -v $SSH_AGENT_PATH:/ssh-agent"
+  DOCKER_CMD="$DOCKER_CMD -e SSH_AUTH_SOCK=/ssh-agent"
+  if [[ "$VERBOSE" == "true" ]]; then
+    echo -e "${YELLOW}SSH agent socket detected and will be forwarded to container${NC}"
+  fi
+fi
+
 # Add image name
 DOCKER_CMD="$DOCKER_CMD $IMAGE_NAME"
 
